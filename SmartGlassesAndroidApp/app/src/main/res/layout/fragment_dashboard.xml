@@ -4,19 +4,32 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#FFFFFF"
     tools:context=".ui.dashboard.DashboardFragment">
 
-    <TextView
-        android:id="@+id/text_dashboard"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:layout_marginTop="8dp"
-        android:layout_marginEnd="8dp"
-        android:textAlignment="center"
-        android:textSize="20sp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
+    <FrameLayout
+        android:id="@+id/frameLayout1"
+        android:layout_width="340dp"
+        android:layout_height="277dp"
+        android:layout_marginStart="32dp"
+        android:background="#455F4B4B"
+        android:backgroundTint="#004A4340"
+        android:backgroundTintMode="add"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toTopOf="parent">
+
+    </FrameLayout>
+
+    <FrameLayout
+        android:id="@+id/frameLayout2"
+        android:layout_width="340dp"
+        android:layout_height="277dp"
+        android:layout_marginTop="50dp"
+        android:background="#455F4B4B"
+        android:backgroundTint="#004A4340"
+        android:backgroundTintMode="add"
+        app:layout_constraintLeft_toLeftOf="@+id/frameLayout1"
+        app:layout_constraintTop_toBottomOf="@+id/frameLayout1">
+
+    </FrameLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>

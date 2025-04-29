@@ -33,6 +33,7 @@ android {
 
 dependencies {
 
+    //default list of dependencies
     implementation libs.appcompat
     implementation libs.material
     implementation libs.constraintlayout
