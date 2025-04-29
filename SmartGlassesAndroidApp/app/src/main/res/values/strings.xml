@@ -5,8 +5,8 @@
     <string name="title_notifications">Notifications</string>
 
 <!--    home page's strings-->
-    <string name="Smart_Glasses">Smart Glasses</string>
-    <string name="translate_on_the_go">~translate on the go~</string>
+    <string name="Smart_Glasses">Glasses Translate</string>
+    <string name="translate_on_the_go">translational</string>
     <string name="emoji_map_glasses_pencil">🗺️ 👓  ✏️</string>
 
 </resources>
