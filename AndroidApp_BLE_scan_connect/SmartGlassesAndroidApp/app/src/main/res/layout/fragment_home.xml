@@ -12,14 +12,58 @@
         android:layout_width="238dp"
         android:layout_height="140dp"
         android:layout_marginStart="84dp"
-        android:layout_marginTop="36dp"
+        android:layout_marginTop="40dp"
         android:background="#00BCD4"
         android:backgroundTint="#00BCD4"
-        android:text="bluetooth scan"
-        android:textColor="#FAF44336"
+        android:text="@string/bluetooth_scan"
+        android:textColor="#FAA90808"
         android:textStyle="bold"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/homeExampleText1" />
+        app:layout_constraintTop_toBottomOf="@+id/homeTitle" />
+
+    <TextView
+        android:id="@+id/homeTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="60dp"
+        android:layout_marginTop="84dp"
+        android:background="#518BC34A"
+        android:fontFamily="cursive"
+        android:text="@string/glasses_translate"
+        android:textAppearance="@style/TextAppearance.AppCompat.Display2"
+        android:textColor="#009688"
+        android:textStyle="bold"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/homeEmojis"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="104dp"
+        android:background="#3A3BFF90"
+        android:text="@string/emoji_map_glasses_pencil"
+        android:textAppearance="@style/TextAppearance.AppCompat.Display2"
+        app:layout_constraintBottom_toTopOf="@+id/homeTitle"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <TextView
+        android:id="@+id/statusWindow"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="144dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="10dp"
+        android:background="#FAF44336"
+        android:fontFamily="sans-serif-smallcaps"
+        android:text="@string/connection_status"
+        android:textColor="#F2ECEC"
+        android:textColorLink="#FAFAFA"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toTopOf="@+id/listDevices"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/scanButton"
+        app:layout_constraintVertical_bias="0.555" />
 
     <ListView
         android:id="@+id/listDevices"
@@ -31,50 +75,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/scanButton"
-        app:layout_constraintVertical_bias="0.333" />
-
-    <TextView
-        android:id="@+id/homeExampleText1"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="60dp"
-        android:layout_marginTop="64dp"
-        android:background="#908BC34A"
-        android:fontFamily="cursive"
-        android:text="@string/Smart_Glasses"
-        android:textAppearance="@style/TextAppearance.AppCompat.Display2"
-        android:textColor="#009688"
-        android:textStyle="bold"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <TextView
-        android:id="@+id/statusWindow"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:layout_marginBottom="10dp"
-        android:background="#FAF44336"
-        android:fontFamily="sans-serif-smallcaps"
-        android:text="connection status"
-        android:textColor="#F2ECEC"
-        android:textColorLink="#FAFAFA"
-        android:textStyle="bold"
-        app:layout_constraintBottom_toTopOf="@+id/listDevices"
-        app:layout_constraintTop_toBottomOf="@+id/scanButton"
-        app:layout_constraintVertical_bias="0.634"
-        tools:layout_editor_absoluteX="144dp" />
-
-    <TextView
-        android:id="@+id/textView5"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="104dp"
-        android:background="#3A3BFF90"
-        android:text="@string/emoji_map_glasses_pencil"
-        android:textAppearance="@style/TextAppearance.AppCompat.Display2"
-        app:layout_constraintBottom_toTopOf="@+id/homeExampleText1"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintVertical_bias="0.362" />
 
 
 </androidx.constraintlayout.widget.ConstraintLayout>
