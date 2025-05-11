@@ -21,8 +21,15 @@ import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
 
+import java.util.UUID;
+
 // Define a Service class to manage GATT (Bluetooth) operations
 public class GATTClientManager extends Service {
+
+    private static final String CHANNEL_ID = "SMARTHANDLEBAR_BLE_service_channel";
+    UUID MY_SERVICE_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+    UUID MY_CHARACTERISTIC_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+    UUID MY_DESCRIPTOR_UUID = UUID.fromString("2901");
 
     private Context context;
     private BluetoothAdapter bluetoothAdapter;
@@ -101,34 +108,45 @@ public class GATTClientManager extends Service {
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             super.onServicesDiscovered(gatt, status);
-            // Handle service discovery here (e.g., reading characteristics or enabling notifications)
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Services discovered");
+
+                // You can interact with the services and characteristics here
+                BluetoothGattService service = gatt.getService(MY_SERVICE_UUID);
+                BluetoothGattCharacteristic characteristic = service.getCharacteristic(MY_CHARACTERISTIC_UUID);
+                // Read/write characteristic or subscribe to notifications
+
+                if (ActivityCompat.checkSelfPermission(GATTClientManager.this,
+                        Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    Log.e(TAG, "BLUETOOTH_CONNECT permission not granted");
+                    stopSelf();
+                    return;
+                }
+
+                gatt.setCharacteristicNotification(characteristic, true);
+                BluetoothGattDescriptor desc = characteristic.getDescriptor(MY_DESCRIPTOR_UUID);
+                desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                gatt.writeDescriptor(desc);
+                Log.i(TAG, "Wrote descriptor to enable notifications.");
+            } else {
+                Log.w(TAG, "onServicesDiscovered received: " + status);
+            }
         }
 
-//        @Override
-//        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-//            if (status == BluetoothGatt.GATT_SUCCESS) {
-//                Log.i(SCAN_TAG, "Services discovered");
-//
-//                // You can interact with the services and characteristics here
-//                BluetoothGattService service = gatt.getService(MY_SERVICE_UUID);
-//                BluetoothGattCharacteristic characteristic = service.getCharacteristic(MY_CHARACTERISTIC_UUID);
-//                // Read/write characteristic or subscribe to notifications
-//            }
-//        }
-//
-//        @Override
-//        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-//            if (status == BluetoothGatt.GATT_SUCCESS) {
-//                Log.i(SCAN_TAG, "Characteristic read: " + characteristic.getStringValue(0));
-//            }
-//        }
-//
-//        @Override
-//        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-//            if (status == BluetoothGatt.GATT_SUCCESS) {
-//                Log.i(SCAN_TAG, "Characteristic written successfully");
-//            }
-//        }
+        @Override
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Characteristic read: " + characteristic.getStringValue(0));
+            }
+        }
+
+        @Override
+        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Characteristic written successfully");
+            }
+        }
     };
 
     public boolean connect(final String address) {

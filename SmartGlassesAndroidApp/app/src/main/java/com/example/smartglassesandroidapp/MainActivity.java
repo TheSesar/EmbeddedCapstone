@@ -1,6 +1,7 @@
 package com.example.smartglassesandroidapp;
 
 /* startup libraries */
+import android.annotation.SuppressLint;
 import android.os.Bundle;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 
@@ -65,6 +66,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean scanning = false; // - Caylan added
     private final Handler handler = new Handler(Looper.getMainLooper());
     private static final long SCAN_PERIOD = 45000;    // Stops scanning after 45 seconds.
+    private String deviceAddress;
 
     // SCAN CALLBACK
     private final List<BluetoothDevice> leDeviceList = new ArrayList<>();
@@ -103,6 +105,12 @@ public class MainActivity extends AppCompatActivity {
                 leDeviceListAdapter.add(device.getName());
                 leDeviceListAdapter.notifyDataSetChanged();
                 Log.i("BLEScan", "Device Added: " + device.getName() + ", Total Devices: " + leDeviceList.size());
+            }
+
+            // Auto-connect to SmartGlassesMCU
+            if ("SmartGlassesMCU".equals(device.getName())) {
+                deviceAddress = device.getAddress();
+                Log.i("BLEScan", "Target device found: " + deviceAddress);
             }
         }
         @Override
@@ -262,6 +270,7 @@ public class MainActivity extends AppCompatActivity {
 
     //connectToDevice
     //***NEWly modified Caylan
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private void connectToDevice(BluetoothDevice device) {
         if (ActivityCompat.checkSelfPermission(this,
                 android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -353,7 +362,6 @@ public class MainActivity extends AppCompatActivity {
      **  BLUETOOTH SERVICE CONNECTION  **
      ************************************/
 
-    private String deviceAddress;
     public static final String SERVICE_TAG = "BLEService";
     private GATTClientManager GATTService;
 
@@ -369,7 +377,13 @@ public class MainActivity extends AppCompatActivity {
                     finish();
                 }
                 // perform device connection
-                GATTService.connect(deviceAddress);
+                if (deviceAddress != null) {
+                    GATTService.connect(deviceAddress);
+                    Log.i(SERVICE_TAG, "GATT successfully connected");
+                } else {
+                    Log.e(SERVICE_TAG, "GATT connection failed due to scanning could not find the mcu!");
+                }
+
             }
         }
 
