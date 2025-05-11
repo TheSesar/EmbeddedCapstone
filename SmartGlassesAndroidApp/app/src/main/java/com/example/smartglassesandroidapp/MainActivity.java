@@ -2,6 +2,7 @@ package com.example.smartglassesandroidapp;
 
 /* startup libraries */
 import android.annotation.SuppressLint;
+import android.os.Build;
 import android.os.Bundle;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 
@@ -70,7 +71,7 @@ public class MainActivity extends AppCompatActivity {
 
     // SCAN CALLBACK
     private final List<BluetoothDevice> leDeviceList = new ArrayList<>();
-    private final ArrayAdapter<String> leDeviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1);
+    private ArrayAdapter<String> leDeviceListAdapter;
 
     private static final int MULTIPLE_PERMISSIONS_REQUEST_CODE = 123;
     private static final int BLE_PERMISSION_REQUEST_CODE = 1;
@@ -208,13 +209,10 @@ public class MainActivity extends AppCompatActivity {
         String[] permissions = new String[]{
                 Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
                 Manifest.permission.BLUETOOTH,
                 Manifest.permission.BLUETOOTH_ADMIN,
                 Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.BLUETOOTH_SCAN
         };
 
         boolean allPermissionsGranted = true;
@@ -270,7 +268,6 @@ public class MainActivity extends AppCompatActivity {
 
     //connectToDevice
     //***NEWly modified Caylan
-    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private void connectToDevice(BluetoothDevice device) {
         if (ActivityCompat.checkSelfPermission(this,
                 android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -281,7 +278,8 @@ public class MainActivity extends AppCompatActivity {
         if (device != null) {
 
             // Register the BroadcastReceiver to start receiving GATT updates
-            registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+            //registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+            onResume();
 
 
             // Bind GATT service if not already bound
@@ -336,7 +334,8 @@ public class MainActivity extends AppCompatActivity {
             statusTextView.setText(connecting_message);
 
             // Unregister the receiver to stop receiving GATT updates
-            unregisterReceiver(gattUpdateReceiver);
+            //unregisterReceiver(gattUpdateReceiver);
+            onPause();
 
             // Stop the BLE service (disconnecting from the device)
             Intent serviceIntent = new Intent(this, GATTClientManager.class);
@@ -418,7 +417,11 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
 
-        registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+        }
         if (GATTService != null) {
             final boolean result = GATTService.connect(deviceAddress);
             Log.d(SERVICE_TAG, "Connect request result=" + result);
@@ -482,6 +485,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+
+        leDeviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1);
 
 
         // Navigation bar to switch between pages via bar buttons: Home, Dashboard, Notifications
