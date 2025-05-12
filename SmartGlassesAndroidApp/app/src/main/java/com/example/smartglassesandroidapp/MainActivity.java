@@ -2,6 +2,8 @@ package com.example.smartglassesandroidapp;
 
 /* startup libraries */
 import android.annotation.SuppressLint;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Bundle;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
@@ -10,6 +12,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.ButtonBarLayout;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.navigation.NavController;
 import androidx.navigation.Navigation;
 import androidx.navigation.ui.AppBarConfiguration;
@@ -36,6 +39,7 @@ import androidx.core.content.ContextCompat;
 //android widget libraries
 import android.widget.Button;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 // java library functions
@@ -111,7 +115,7 @@ public class MainActivity extends AppCompatActivity {
             // Auto-connect to SmartGlassesMCU
             if ("SmartGlassesMCU".equals(device.getName())) {
                 deviceAddress = device.getAddress();
-                Log.i("BLEScan", "Target device found: " + deviceAddress);
+                Log.i("BLEScan", "Target device found: " + device.getName() + ": "+ deviceAddress);
             }
         }
         @Override
@@ -152,7 +156,11 @@ public class MainActivity extends AppCompatActivity {
                 scanning = true;
                 bluetoothLeScanner.startScan(leScanCallback);
                 Log.i(SCAN_TAG, "Started BLE Scan");
-                handler.postDelayed(this::stopScanDevice, SCAN_PERIOD);
+                handler.postDelayed(() -> {
+                    stopScanDevice();
+                    scanning = false;
+                    runOnUiThread(() -> bleScanButton.setText(R.string.start_scanning));
+                }, SCAN_PERIOD);
             } else {
                 ActivityCompat.requestPermissions(this,                             // public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults)
                         new String[]{Manifest.permission.BLUETOOTH_ADMIN,                  // to handle the case where the user grants the permission.
@@ -278,12 +286,16 @@ public class MainActivity extends AppCompatActivity {
         if (device != null) {
 
             // Register the BroadcastReceiver to start receiving GATT updates
-            //registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
-            onResume();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+            }
 
 
             // Bind GATT service if not already bound
             if (GATTService == null) {
+                Log.i("GATT", "Connecting to the service");
                 // create intent to bind to Gatt Client Manager Service
                 Intent gattServiceIntent = new Intent(this, GATTClientManager.class);
                 // use serviceConnection() to connect to Gatt service
@@ -334,8 +346,7 @@ public class MainActivity extends AppCompatActivity {
             statusTextView.setText(connecting_message);
 
             // Unregister the receiver to stop receiving GATT updates
-            //unregisterReceiver(gattUpdateReceiver);
-            onPause();
+            unregisterReceiver(gattUpdateReceiver);
 
             // Stop the BLE service (disconnecting from the device)
             Intent serviceIntent = new Intent(this, GATTClientManager.class);
@@ -343,6 +354,7 @@ public class MainActivity extends AppCompatActivity {
 
             // Unbind from the GATT service
             if (GATTService != null) {
+                Log.i("GATT", "Disconnecting from service.");
                 unbindService(serviceConnection);
                 GATTService = null;
             }
@@ -351,6 +363,9 @@ public class MainActivity extends AppCompatActivity {
             connectedDevice = null;
             Log.i("BLE", "Disconnected from device.");
 
+            if (GATTService == null) {
+                Log.i("GATT", "Disconnected from service.");
+            }
         } else {
             Log.i("BLE", "No device connected.");
         }
@@ -395,13 +410,19 @@ public class MainActivity extends AppCompatActivity {
     /************************************
      **     GATT SERVICE LISTENING     **
      ************************************/
-
+    private ImageView imageView;
 
 
     //BroadcastReceiver
     private final BroadcastReceiver gattUpdateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            byte[] imageData = intent.getByteArrayExtra("image_bitmap");
+            if (imageData != null) {
+                Bitmap bmp = BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
+                imageView.setImageBitmap(bmp);
+            }
+
             final String action = intent.getAction();
             if (GATTClientManager.ACTION_GATT_CONNECTED.equals(action)) {
                 connected = true;
@@ -410,6 +431,12 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     };
+
+    /************************************
+     **   DISPLAY GATT SERVICES FOUND  **
+     ************************************/
+
+
 
 
     //onResume
@@ -426,6 +453,9 @@ public class MainActivity extends AppCompatActivity {
             final boolean result = GATTService.connect(deviceAddress);
             Log.d(SERVICE_TAG, "Connect request result=" + result);
         }
+
+        LocalBroadcastManager.getInstance(this)
+                .registerReceiver(gattUpdateReceiver, new IntentFilter("IMAGE_DATA_READY"));
     }
 
 
@@ -434,6 +464,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         unregisterReceiver(gattUpdateReceiver);
+        LocalBroadcastManager.getInstance(this)
+                .unregisterReceiver(gattUpdateReceiver);
     }
 
 
@@ -485,6 +517,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+
+        imageView = findViewById(R.id.image_view);
 
         leDeviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1);
 
@@ -543,10 +577,10 @@ public class MainActivity extends AppCompatActivity {
         bleScanButton.setOnClickListener(v -> {
             if (!scanning) {
                 startScanDevice();
-                bleScanButton.setText(R.string.start_scanning);
+                bleScanButton.setText(R.string.stop_scanning);
             } else {
                 stopScanDevice();
-                bleScanButton.setText(R.string.stop_scanning);
+                bleScanButton.setText(R.string.start_scanning);
             }
         });
 

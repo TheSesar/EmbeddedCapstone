@@ -15,6 +15,8 @@
     <string name="start_scanning">Start Scanning</string>
     <string name="connection_status">connection status</string>
 
+    <string name="image_desc">Image received from MCU</string>
+
 
     <!--    %1$s is placeholder for a string that gets inserted later -->
 

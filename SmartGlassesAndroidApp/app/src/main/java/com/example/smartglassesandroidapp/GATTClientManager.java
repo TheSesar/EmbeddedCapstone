@@ -15,21 +15,28 @@ import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Binder;
 import android.os.IBinder;
 import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.UUID;
 
 // Define a Service class to manage GATT (Bluetooth) operations
 public class GATTClientManager extends Service {
 
     private static final String CHANNEL_ID = "SMARTHANDLEBAR_BLE_service_channel";
-    UUID MY_SERVICE_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
-    UUID MY_CHARACTERISTIC_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
-    UUID MY_DESCRIPTOR_UUID = UUID.fromString("2901");
+    private static final UUID IMAGE_SERVICE_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID IMAGE_CHARACTERISTIC_UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID IMAGE_METADATA_CHARACTERISTIC_UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID MY_DESCRIPTOR_UUID = UUID.fromString("2901");
 
     private Context context;
     private BluetoothAdapter bluetoothAdapter;
@@ -79,10 +86,14 @@ public class GATTClientManager extends Service {
             "com.example.bluetooth.le.ACTION_GATT_CONNECTED";
     public final static String ACTION_GATT_DISCONNECTED =
             "com.example.bluetooth.le.ACTION_GATT_DISCONNECTED";
+    public final static String ACTION_GATT_SERVICES_DISCOVERED =
+            "com.example.bluetooth.le.ACTION_GATT_SERVICES_DISCOVERED";
 
     private static final int STATE_DISCONNECTED = 0;
     private static final int STATE_CONNECTED = 2;
 
+    private ByteArrayOutputStream imageBuffer = new ByteArrayOutputStream();
+    private int expectedImageSize = 0;
     private int connectionState;
 
     // BROADCASTING
@@ -91,6 +102,7 @@ public class GATTClientManager extends Service {
         sendBroadcast(intent);
     }
 
+
     private final BluetoothGattCallback bluetoothGattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
@@ -98,6 +110,11 @@ public class GATTClientManager extends Service {
                 // successfully connected to the GATT Server
                 connectionState = STATE_CONNECTED;
                 broadcastUpdate(ACTION_GATT_CONNECTED);
+                if (ActivityCompat.checkSelfPermission(GATTClientManager.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    Log.e("Service Permission", "cannot discover services due to permission restrictions.");
+                    return;
+                }
+                bluetoothGatt.discoverServices();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 // disconnected from the GATT Server
                 connectionState = STATE_DISCONNECTED;
@@ -111,33 +128,85 @@ public class GATTClientManager extends Service {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "Services discovered");
+                broadcastUpdate(ACTION_GATT_SERVICES_DISCOVERED);
 
-                // You can interact with the services and characteristics here
-                BluetoothGattService service = gatt.getService(MY_SERVICE_UUID);
-                BluetoothGattCharacteristic characteristic = service.getCharacteristic(MY_CHARACTERISTIC_UUID);
-                // Read/write characteristic or subscribe to notifications
+                // Step 1: Access the custom service
+                BluetoothGattService service = gatt.getService(IMAGE_SERVICE_UUID);
+                if (service != null) {
+                    Log.i(TAG, "Image service found!");
 
-                if (ActivityCompat.checkSelfPermission(GATTClientManager.this,
-                        Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                    Log.e(TAG, "BLUETOOTH_CONNECT permission not granted");
-                    stopSelf();
-                    return;
+                    // Step 2: Read the metadata characteristic (to get image size, etc.)
+                    BluetoothGattCharacteristic metadataCharacteristic = service.getCharacteristic(IMAGE_METADATA_CHARACTERISTIC_UUID);
+                    if (metadataCharacteristic != null) {
+                        if (ActivityCompat.checkSelfPermission(GATTClientManager.this,
+                                Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                            Log.e(TAG, "BLUETOOTH_CONNECT permission not granted");
+                            stopSelf();
+                            return;
+                        }
+
+                        gatt.readCharacteristic(metadataCharacteristic);
+                    }
+
+                    // Step 3: Enable notifications for the actual image data
+                    BluetoothGattCharacteristic imageCharacteristic = service.getCharacteristic(IMAGE_CHARACTERISTIC_UUID);
+                    if (imageCharacteristic != null) {
+                        Log.i(TAG, "Image characteristic found!");
+
+                        if (ActivityCompat.checkSelfPermission(GATTClientManager.this,
+                                Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                            Log.e(TAG, "BLUETOOTH_CONNECT permission not granted");
+                            stopSelf();
+                            return;
+                        }
+
+                        gatt.setCharacteristicNotification(imageCharacteristic, true);
+                        BluetoothGattDescriptor desc = imageCharacteristic.getDescriptor(MY_DESCRIPTOR_UUID);
+
+                        if (desc != null) {
+                            Log.i(TAG, "Descriptor found!");
+                            desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                            gatt.writeDescriptor(desc);
+                            Log.i(TAG, "Wrote descriptor to enable notifications.");
+                        }
+                    }
+                } else {
+                    Log.i(TAG, "Image service NOT found!");
                 }
-
-                gatt.setCharacteristicNotification(characteristic, true);
-                BluetoothGattDescriptor desc = characteristic.getDescriptor(MY_DESCRIPTOR_UUID);
-                desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                gatt.writeDescriptor(desc);
-                Log.i(TAG, "Wrote descriptor to enable notifications.");
             } else {
                 Log.w(TAG, "onServicesDiscovered received: " + status);
             }
         }
 
         @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            if (IMAGE_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                byte[] chunk = characteristic.getValue();
+                imageBuffer.write(chunk, 0, chunk.length);
+
+                // Check if the entire image has been received
+                if (imageBuffer.size() >= expectedImageSize) {
+                    byte[] fullImage = imageBuffer.toByteArray();
+                    Bitmap bitmap = BitmapFactory.decodeByteArray(fullImage, 0, fullImage.length);
+
+                    Intent intent = new Intent("IMAGE_DATA_READY");
+                    intent.putExtra("image_bitmap", fullImage);
+                    LocalBroadcastManager.getInstance(context).sendBroadcast(intent);
+
+                    imageBuffer.reset(); // Clear buffer for next image
+                }
+            }
+        }
+
+
+        @Override
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "Characteristic read: " + characteristic.getStringValue(0));
+            } if (IMAGE_METADATA_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                byte[] metadata = characteristic.getValue();
+                // Parse metadata to extract image size
+                expectedImageSize = parseImageSize(metadata);
             }
         }
 
@@ -148,6 +217,13 @@ public class GATTClientManager extends Service {
             }
         }
     };
+
+    // save the metadata of the incoming image
+    private int parseImageSize(byte[] metadata) {
+        // Assuming the first 4 bytes represent the image size
+        return ByteBuffer.wrap(metadata, 0, 4).getInt();
+    }
+
 
     public boolean connect(final String address) {
         if (bluetoothAdapter == null || address == null) {
