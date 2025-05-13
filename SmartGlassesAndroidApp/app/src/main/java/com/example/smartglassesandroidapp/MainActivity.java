@@ -180,10 +180,6 @@ public class MainActivity extends AppCompatActivity {
             }
             bluetoothLeScanner.stopScan(leScanCallback);
             Log.i(SCAN_TAG, "Stopped BLE Scan");
-            // leDeviceList.clear();
-            // leDeviceListAdapter.clear();
-            // leDeviceListAdapter.notifyDataSetChanged();
-            // bleScanButton.setText("Start Scanning"); WE MIGHT NEED BUTTON LATER
         }
     }
 
@@ -287,9 +283,9 @@ public class MainActivity extends AppCompatActivity {
 
             // Register the BroadcastReceiver to start receiving GATT updates
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
+                registerReceiver(connectionReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
             } else {
-                registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+                registerReceiver(connectionReceiver, makeGattUpdateIntentFilter());
             }
 
 
@@ -321,7 +317,7 @@ public class MainActivity extends AppCompatActivity {
             String deviceName1 = getSafeDeviceName(connectedDevice);
             String connecting_message = getString(R.string.device_disconnected, deviceName1);
             statusTextView.setText(connecting_message);
-
+            Log.i("BLE", "Connected status: " + connected);
         }
     }
 
@@ -346,7 +342,7 @@ public class MainActivity extends AppCompatActivity {
             statusTextView.setText(connecting_message);
 
             // Unregister the receiver to stop receiving GATT updates
-            unregisterReceiver(gattUpdateReceiver);
+            unregisterReceiver(connectionReceiver);
 
             // Stop the BLE service (disconnecting from the device)
             Intent serviceIntent = new Intent(this, GATTClientManager.class);
@@ -366,6 +362,8 @@ public class MainActivity extends AppCompatActivity {
             if (GATTService == null) {
                 Log.i("GATT", "Disconnected from service.");
             }
+
+            Log.i("BLE", "Connected status: " + connected);
         } else {
             Log.i("BLE", "No device connected.");
         }
@@ -410,19 +408,40 @@ public class MainActivity extends AppCompatActivity {
     /************************************
      **     GATT SERVICE LISTENING     **
      ************************************/
-    private ImageView imageView;
 
+    /*
+        [BLE Device Sends Data]
+                    ↓
+        [BluetoothGattCallback onCharacteristicChanged()]
+                    ↓
+        Send Local Broadcast ("IMAGE_DATA_READY")
+                    ↓
+        [BroadcastReceiver onReceive()]
+                    ↓
+        Update UI (imageView.setImageBitmap, etc.)
+    */
+    private ImageView imageView; // Widget
 
     //BroadcastReceiver
-    private final BroadcastReceiver gattUpdateReceiver = new BroadcastReceiver() {
+
+    // For image handling
+    // Gets data from BLE layer (e.g. images) and updates UI
+    private final BroadcastReceiver imageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            byte[] imageData = intent.getByteArrayExtra("image_bitmap");
-            if (imageData != null) {
-                Bitmap bmp = BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
-                imageView.setImageBitmap(bmp);
+            if ("IMAGE_DATA_READY".equals(intent.getAction())) {
+                byte[] imageData = intent.getByteArrayExtra("image_bitmap");
+                assert imageData != null;
+                Bitmap bitmap = BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
+                imageView.setImageBitmap(bitmap);
             }
+        }
+    };
 
+    // For connection state
+    private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
             final String action = intent.getAction();
             if (GATTClientManager.ACTION_GATT_CONNECTED.equals(action)) {
                 connected = true;
@@ -432,40 +451,34 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    /************************************
-     **   DISPLAY GATT SERVICES FOUND  **
-     ************************************/
 
-
-
-
-    //onResume
+    // Registering in onResume() ensures your receiver is only active while the activity is visible.
     @Override
     protected void onResume() {
         super.onResume();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(connectionReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
         } else {
-            registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+            registerReceiver(connectionReceiver, makeGattUpdateIntentFilter());
         }
         if (GATTService != null) {
             final boolean result = GATTService.connect(deviceAddress);
             Log.d(SERVICE_TAG, "Connect request result=" + result);
         }
-
+        // Simple communication from BLE handler to UI
         LocalBroadcastManager.getInstance(this)
-                .registerReceiver(gattUpdateReceiver, new IntentFilter("IMAGE_DATA_READY"));
+                .registerReceiver(imageReceiver, new IntentFilter("IMAGE_DATA_READY"));
     }
 
 
-    //onPause
+    // Unregistering in onPause() prevents memory leaks or unwanted callbacks when the activity is not in the foreground.
     @Override
     protected void onPause() {
         super.onPause();
-        unregisterReceiver(gattUpdateReceiver);
+        unregisterReceiver(connectionReceiver);
         LocalBroadcastManager.getInstance(this)
-                .unregisterReceiver(gattUpdateReceiver);
+                .unregisterReceiver(imageReceiver);
     }
 
 

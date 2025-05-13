@@ -92,7 +92,7 @@ public class GATTClientManager extends Service {
     private static final int STATE_DISCONNECTED = 0;
     private static final int STATE_CONNECTED = 2;
 
-    private ByteArrayOutputStream imageBuffer = new ByteArrayOutputStream();
+    private final ByteArrayOutputStream imageBuffer = new ByteArrayOutputStream();
     private int expectedImageSize = 0;
     private int connectionState;
 
@@ -102,8 +102,20 @@ public class GATTClientManager extends Service {
         sendBroadcast(intent);
     }
 
+    /*
+     Connect to device → onConnectionStateChange()
+                           ↓
+              Discover services → onServicesDiscovered()
+                           ↓
+     Find your characteristic and enable notifications
+                           ↓
+     Device sends data     → onCharacteristicChanged()
+     You request data      → onCharacteristicRead()
+    */
 
+    // Reacts to BLE events (connect, discover, read, notify)
     private final BluetoothGattCallback bluetoothGattCallback = new BluetoothGattCallback() {
+        // Called when connection state changes (connected/disconnected)
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
@@ -114,7 +126,8 @@ public class GATTClientManager extends Service {
                     Log.e("Service Permission", "cannot discover services due to permission restrictions.");
                     return;
                 }
-                bluetoothGatt.discoverServices();
+                gatt.discoverServices(); // Calls onServiceDiscovered
+                bluetoothGatt.discoverServices(); // Discover services after successful connection
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 // disconnected from the GATT Server
                 connectionState = STATE_DISCONNECTED;
@@ -122,6 +135,7 @@ public class GATTClientManager extends Service {
             }
         }
 
+        // Exploring what services and characteristics a BLE device offers.
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             super.onServicesDiscovered(gatt, status);
@@ -145,7 +159,7 @@ public class GATTClientManager extends Service {
                             return;
                         }
 
-                        gatt.readCharacteristic(metadataCharacteristic);
+                        gatt.readCharacteristic(metadataCharacteristic); // calls onCharacteristicRead
                     }
 
                     // Step 3: Enable notifications for the actual image data
@@ -160,7 +174,9 @@ public class GATTClientManager extends Service {
                             return;
                         }
 
-                        gatt.setCharacteristicNotification(imageCharacteristic, true);
+                        // Enable notifications via descriptor
+                        // this call enables or disables local notification tracking for a given characteristic.
+                        gatt.setCharacteristicNotification(imageCharacteristic, true); // Calls onCharacteristicChanged
                         BluetoothGattDescriptor desc = imageCharacteristic.getDescriptor(MY_DESCRIPTOR_UUID);
 
                         if (desc != null) {
@@ -178,35 +194,38 @@ public class GATTClientManager extends Service {
             }
         }
 
+        // When the remote device sends notifications or indications, handles received data
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             if (IMAGE_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
                 byte[] chunk = characteristic.getValue();
-                imageBuffer.write(chunk, 0, chunk.length);
 
-                // Check if the entire image has been received
-                if (imageBuffer.size() >= expectedImageSize) {
-                    byte[] fullImage = imageBuffer.toByteArray();
-                    Bitmap bitmap = BitmapFactory.decodeByteArray(fullImage, 0, fullImage.length);
+                synchronized (imageBuffer) {
+                    imageBuffer.write(chunk, 0, chunk.length);
 
-                    Intent intent = new Intent("IMAGE_DATA_READY");
-                    intent.putExtra("image_bitmap", fullImage);
-                    LocalBroadcastManager.getInstance(context).sendBroadcast(intent);
+                    // Check if we have received the complete image
+                    if (imageBuffer.size() >= expectedImageSize) {
+                        byte[] fullImage = imageBuffer.toByteArray();
+                        Bitmap bitmap = BitmapFactory.decodeByteArray(fullImage, 0, fullImage.length);
 
-                    imageBuffer.reset(); // Clear buffer for next image
+                        Intent intent = new Intent("IMAGE_DATA_READY");
+                        intent.putExtra("image_bitmap", fullImage); // Caution: Size limits apply
+                        LocalBroadcastManager.getInstance(context).sendBroadcast(intent);
+
+                        imageBuffer.reset();
+                    }
                 }
             }
         }
 
-
+        // Used to read characteristics manually (e.g., metadata like image size).
         @Override
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.i(TAG, "Characteristic read: " + characteristic.getStringValue(0));
-            } if (IMAGE_METADATA_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
-                byte[] metadata = characteristic.getValue();
-                // Parse metadata to extract image size
-                expectedImageSize = parseImageSize(metadata);
+                if (IMAGE_METADATA_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                    byte[] metadata = characteristic.getValue();
+                    expectedImageSize = parseImageSize(metadata);
+                }
             }
         }
 
