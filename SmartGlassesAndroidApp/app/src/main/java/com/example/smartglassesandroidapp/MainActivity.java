@@ -382,6 +382,7 @@ public class MainActivity extends AppCompatActivity {
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
+            Log.d("BLE", "CHECK Service connected");
             GATTService = ((GATTClientManager.LocalBinder) service).getService();
             if (GATTService != null) {
                 if (!GATTService.initialize()) {

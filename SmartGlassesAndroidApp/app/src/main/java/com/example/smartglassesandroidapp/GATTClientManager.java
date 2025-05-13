@@ -36,14 +36,11 @@ public class GATTClientManager extends Service {
     private static final UUID IMAGE_SERVICE_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID IMAGE_CHARACTERISTIC_UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID IMAGE_METADATA_CHARACTERISTIC_UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
-    private static final UUID MY_DESCRIPTOR_UUID = UUID.fromString("2901");
+    private static final UUID MY_DESCRIPTOR_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private Context context;
     private BluetoothAdapter bluetoothAdapter;
 
-    public GATTClientManager(Context context) {
-        this.context = context.getApplicationContext(); // safer, avoid leaking Activity
-    }
 
     /************************************
      **      BluetoothAdapter INIT     **
@@ -197,7 +194,9 @@ public class GATTClientManager extends Service {
         // When the remote device sends notifications or indications, handles received data
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            Log.i(TAG, "CHECK: UUID");
             if (IMAGE_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                Log.i(TAG, "CHECK: Matched");
                 byte[] chunk = characteristic.getValue();
 
                 synchronized (imageBuffer) {
@@ -208,9 +207,11 @@ public class GATTClientManager extends Service {
                         byte[] fullImage = imageBuffer.toByteArray();
                         Bitmap bitmap = BitmapFactory.decodeByteArray(fullImage, 0, fullImage.length);
 
+                        Log.i(TAG, "REACHED IMAGE DATA PART");
+                        // Send broadcast to Activity
                         Intent intent = new Intent("IMAGE_DATA_READY");
                         intent.putExtra("image_bitmap", fullImage); // Caution: Size limits apply
-                        LocalBroadcastManager.getInstance(context).sendBroadcast(intent);
+                        LocalBroadcastManager.getInstance(context).sendBroadcast(intent);  // same as sending action to intent!!
 
                         imageBuffer.reset();
                     }
@@ -221,6 +222,7 @@ public class GATTClientManager extends Service {
         // Used to read characteristics manually (e.g., metadata like image size).
         @Override
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            Log.i(TAG, "CHECK: READ FROM ESP METADATA");
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (IMAGE_METADATA_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
                     byte[] metadata = characteristic.getValue();
@@ -339,6 +341,7 @@ public class GATTClientManager extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        context = getApplicationContext();
         Log.d(TAG, "Service created, initializing Bluetooth adapter...");
 
         boolean initResult = initialize();

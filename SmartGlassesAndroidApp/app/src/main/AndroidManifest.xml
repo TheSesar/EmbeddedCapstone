@@ -28,6 +28,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SmartGlassesAndroidApp"
         tools:targetApi="31">
+        <service
+            android:name=".GATTClientManager"
+            android:enabled="true"
+            android:exported="false"
+            tools:ignore="Instantiatable" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
