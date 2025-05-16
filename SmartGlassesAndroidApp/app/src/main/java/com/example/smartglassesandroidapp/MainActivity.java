@@ -288,6 +288,9 @@ public class MainActivity extends AppCompatActivity {
                 registerReceiver(connectionReceiver, makeGattUpdateIntentFilter());
             }
 
+            // IntentFilter filter = new IntentFilter("TEXT_DATA_READY"); // CHECK SELIM
+            // LocalBroadcastManager.getInstance(this).registerReceiver(textReceiver, filter);
+
 
             // Bind GATT service if not already bound
             if (GATTService == null) {
@@ -343,8 +346,7 @@ public class MainActivity extends AppCompatActivity {
 
             // Unregister the receiver to stop receiving GATT updates
             unregisterReceiver(connectionReceiver);
-            LocalBroadcastManager.getInstance(this)
-                    .unregisterReceiver(imageReceiver);
+            // LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver); // CHECK SELIM
 
             // Stop the BLE service (disconnecting from the device)
             Intent serviceIntent = new Intent(this, GATTClientManager.class);
@@ -426,16 +428,14 @@ public class MainActivity extends AppCompatActivity {
 
     // For image handling
     // Gets data from BLE layer (e.g. images) and updates UI
-    private final BroadcastReceiver imageReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver textReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            Log.i("ImageReceiver", "OnReceive Activated");
-            if ("IMAGE_DATA_READY".equals(intent.getAction())) {
-                byte[] imageData = intent.getByteArrayExtra("image_bitmap");
-                assert imageData != null;
-                Bitmap bitmap = BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
-                imageView.setImageBitmap(bitmap);
-                Log.i("ImageReceiver", "Bitmap is set!");
+            Log.i("Data Receiver", "OnReceive Activated");
+            if ("TEXT_DATA_READY".equals(intent.getAction())) {
+                String text = intent.getStringExtra("incoming_text_data");
+                Log.i("TextReceiver", "CHECK TEXT: " + text);
+                // ADD UI
             }
         }
     };
@@ -468,11 +468,9 @@ public class MainActivity extends AppCompatActivity {
             final boolean result = GATTService.connect(deviceAddress);
             Log.d(SERVICE_TAG, "Connect request result=" + result);
         }
-        // Simple communication from BLE handler to UI
-        LocalBroadcastManager.getInstance(this)
-                .registerReceiver(imageReceiver, new IntentFilter("IMAGE_DATA_READY"));
+        IntentFilter filter = new IntentFilter("TEXT_DATA_READY");
+        LocalBroadcastManager.getInstance(this).registerReceiver(textReceiver, filter);
 
-        Log.d(SERVICE_TAG, "WELLLL");
     }
 
 
@@ -486,11 +484,7 @@ public class MainActivity extends AppCompatActivity {
             Log.w("Pause", "connectionReceiver was not registered");
         }
 
-        try {
-            LocalBroadcastManager.getInstance(this).unregisterReceiver(imageReceiver);
-        } catch (IllegalArgumentException e) {
-            Log.w("Pause", "imageReceiver was not registered");
-        }
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver);
     }
 
 
