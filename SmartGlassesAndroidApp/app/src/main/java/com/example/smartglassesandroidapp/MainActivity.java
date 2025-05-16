@@ -1,6 +1,10 @@
 package com.example.smartglassesandroidapp;
 
 /* startup libraries */
+import android.annotation.SuppressLint;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.Build;
 import android.os.Bundle;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 
@@ -8,6 +12,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.ButtonBarLayout;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.navigation.NavController;
 import androidx.navigation.Navigation;
 import androidx.navigation.ui.AppBarConfiguration;
@@ -34,6 +39,7 @@ import androidx.core.content.ContextCompat;
 //android widget libraries
 import android.widget.Button;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 // java library functions
@@ -65,10 +71,11 @@ public class MainActivity extends AppCompatActivity {
     private boolean scanning = false; // - Caylan added
     private final Handler handler = new Handler(Looper.getMainLooper());
     private static final long SCAN_PERIOD = 45000;    // Stops scanning after 45 seconds.
+    private String deviceAddress;
 
     // SCAN CALLBACK
     private final List<BluetoothDevice> leDeviceList = new ArrayList<>();
-    private final ArrayAdapter<String> leDeviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1);
+    private ArrayAdapter<String> leDeviceListAdapter;
 
     private static final int MULTIPLE_PERMISSIONS_REQUEST_CODE = 123;
     private static final int BLE_PERMISSION_REQUEST_CODE = 1;
@@ -103,6 +110,12 @@ public class MainActivity extends AppCompatActivity {
                 leDeviceListAdapter.add(device.getName());
                 leDeviceListAdapter.notifyDataSetChanged();
                 Log.i("BLEScan", "Device Added: " + device.getName() + ", Total Devices: " + leDeviceList.size());
+            }
+
+            // Auto-connect to SmartGlassesMCU
+            if ("SmartGlassesMCU".equals(device.getName())) {
+                deviceAddress = device.getAddress();
+                Log.i("BLEScan", "Target device found: " + device.getName() + ": "+ deviceAddress);
             }
         }
         @Override
@@ -143,7 +156,11 @@ public class MainActivity extends AppCompatActivity {
                 scanning = true;
                 bluetoothLeScanner.startScan(leScanCallback);
                 Log.i(SCAN_TAG, "Started BLE Scan");
-                handler.postDelayed(this::stopScanDevice, SCAN_PERIOD);
+                handler.postDelayed(() -> {
+                    stopScanDevice();
+                    scanning = false;
+                    runOnUiThread(() -> bleScanButton.setText(R.string.start_scanning));
+                }, SCAN_PERIOD);
             } else {
                 ActivityCompat.requestPermissions(this,                             // public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults)
                         new String[]{Manifest.permission.BLUETOOTH_ADMIN,                  // to handle the case where the user grants the permission.
@@ -163,10 +180,6 @@ public class MainActivity extends AppCompatActivity {
             }
             bluetoothLeScanner.stopScan(leScanCallback);
             Log.i(SCAN_TAG, "Stopped BLE Scan");
-            // leDeviceList.clear();
-            // leDeviceListAdapter.clear();
-            // leDeviceListAdapter.notifyDataSetChanged();
-            // bleScanButton.setText("Start Scanning"); WE MIGHT NEED BUTTON LATER
         }
     }
 
@@ -200,13 +213,10 @@ public class MainActivity extends AppCompatActivity {
         String[] permissions = new String[]{
                 Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
                 Manifest.permission.BLUETOOTH,
                 Manifest.permission.BLUETOOTH_ADMIN,
                 Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.BLUETOOTH_SCAN
         };
 
         boolean allPermissionsGranted = true;
@@ -272,11 +282,19 @@ public class MainActivity extends AppCompatActivity {
         if (device != null) {
 
             // Register the BroadcastReceiver to start receiving GATT updates
-            registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(connectionReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(connectionReceiver, makeGattUpdateIntentFilter());
+            }
+
+            // IntentFilter filter = new IntentFilter("TEXT_DATA_READY"); // CHECK SELIM
+            // LocalBroadcastManager.getInstance(this).registerReceiver(textReceiver, filter);
 
 
             // Bind GATT service if not already bound
             if (GATTService == null) {
+                Log.i("GATT", "Connecting to the service");
                 // create intent to bind to Gatt Client Manager Service
                 Intent gattServiceIntent = new Intent(this, GATTClientManager.class);
                 // use serviceConnection() to connect to Gatt service
@@ -302,7 +320,7 @@ public class MainActivity extends AppCompatActivity {
             String deviceName1 = getSafeDeviceName(connectedDevice);
             String connecting_message = getString(R.string.device_disconnected, deviceName1);
             statusTextView.setText(connecting_message);
-
+            Log.i("BLE", "Connected status: " + connected);
         }
     }
 
@@ -327,7 +345,8 @@ public class MainActivity extends AppCompatActivity {
             statusTextView.setText(connecting_message);
 
             // Unregister the receiver to stop receiving GATT updates
-            unregisterReceiver(gattUpdateReceiver);
+            unregisterReceiver(connectionReceiver);
+            // LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver); // CHECK SELIM
 
             // Stop the BLE service (disconnecting from the device)
             Intent serviceIntent = new Intent(this, GATTClientManager.class);
@@ -335,6 +354,7 @@ public class MainActivity extends AppCompatActivity {
 
             // Unbind from the GATT service
             if (GATTService != null) {
+                Log.i("GATT", "Disconnecting from service.");
                 unbindService(serviceConnection);
                 GATTService = null;
             }
@@ -343,6 +363,11 @@ public class MainActivity extends AppCompatActivity {
             connectedDevice = null;
             Log.i("BLE", "Disconnected from device.");
 
+            if (GATTService == null) {
+                Log.i("GATT", "Disconnected from service.");
+            }
+
+            Log.i("BLE", "Connected status: " + connected);
         } else {
             Log.i("BLE", "No device connected.");
         }
@@ -353,7 +378,6 @@ public class MainActivity extends AppCompatActivity {
      **  BLUETOOTH SERVICE CONNECTION  **
      ************************************/
 
-    private String deviceAddress;
     public static final String SERVICE_TAG = "BLEService";
     private GATTClientManager GATTService;
 
@@ -369,24 +393,55 @@ public class MainActivity extends AppCompatActivity {
                     finish();
                 }
                 // perform device connection
-                GATTService.connect(deviceAddress);
+                if (deviceAddress != null) {
+                    GATTService.connect(deviceAddress);
+                    Log.i(SERVICE_TAG, "GATT successfully connected");
+                } else {
+                    Log.e(SERVICE_TAG, "GATT connection failed due to scanning could not find the mcu!");
+                }
+
             }
         }
 
         @Override
-        public void onServiceDisconnected(ComponentName name) {
-            GATTService = null;
-        }
+        public void onServiceDisconnected(ComponentName name) { GATTService = null; }
     };
 
     /************************************
      **     GATT SERVICE LISTENING     **
      ************************************/
 
-
+    /*
+        [BLE Device Sends Data]
+                    ↓
+        [BluetoothGattCallback onCharacteristicChanged()]
+                    ↓
+        Send Local Broadcast ("IMAGE_DATA_READY")
+                    ↓
+        [BroadcastReceiver onReceive()]
+                    ↓
+        Update UI (imageView.setImageBitmap, etc.)
+    */
+    private ImageView imageView; // Widget
 
     //BroadcastReceiver
-    private final BroadcastReceiver gattUpdateReceiver = new BroadcastReceiver() {
+
+    // For image handling
+    // Gets data from BLE layer (e.g. images) and updates UI
+    private final BroadcastReceiver textReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.i("Data Receiver", "OnReceive Activated");
+            if ("TEXT_DATA_READY".equals(intent.getAction())) {
+                String text = intent.getStringExtra("incoming_text_data");
+                Log.i("TextReceiver", "CHECK TEXT: " + text);
+                // ADD UI
+            }
+        }
+    };
+
+    // For connection state
+    private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             final String action = intent.getAction();
@@ -399,24 +454,37 @@ public class MainActivity extends AppCompatActivity {
     };
 
 
-    //onResume
+    // Registering in onResume() ensures your receiver is only active while the activity is visible.
     @Override
     protected void onResume() {
         super.onResume();
 
-        registerReceiver(gattUpdateReceiver, makeGattUpdateIntentFilter());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(connectionReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(connectionReceiver, makeGattUpdateIntentFilter());
+        }
         if (GATTService != null) {
             final boolean result = GATTService.connect(deviceAddress);
             Log.d(SERVICE_TAG, "Connect request result=" + result);
         }
+        IntentFilter filter = new IntentFilter("TEXT_DATA_READY");
+        LocalBroadcastManager.getInstance(this).registerReceiver(textReceiver, filter);
+
     }
 
 
-    //onPause
+    // Unregistering in onPause() prevents memory leaks or unwanted callbacks when the activity is not in the foreground.
     @Override
     protected void onPause() {
         super.onPause();
-        unregisterReceiver(gattUpdateReceiver);
+        try {
+            unregisterReceiver(connectionReceiver);
+        } catch (IllegalArgumentException e) {
+            Log.w("Pause", "connectionReceiver was not registered");
+        }
+
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver);
     }
 
 
@@ -468,6 +536,10 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+
+        imageView = findViewById(R.id.image_view);
+
+        leDeviceListAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1);
 
 
         // Navigation bar to switch between pages via bar buttons: Home, Dashboard, Notifications
@@ -524,10 +596,10 @@ public class MainActivity extends AppCompatActivity {
         bleScanButton.setOnClickListener(v -> {
             if (!scanning) {
                 startScanDevice();
-                bleScanButton.setText(R.string.start_scanning);
+                bleScanButton.setText(R.string.stop_scanning);
             } else {
                 stopScanDevice();
-                bleScanButton.setText(R.string.stop_scanning);
+                bleScanButton.setText(R.string.start_scanning);
             }
         });
 

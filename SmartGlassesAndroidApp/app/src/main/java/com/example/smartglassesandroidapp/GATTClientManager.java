@@ -15,21 +15,33 @@ import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Binder;
 import android.os.IBinder;
 import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.UUID;
 
 // Define a Service class to manage GATT (Bluetooth) operations
 public class GATTClientManager extends Service {
 
+    private static final String CHANNEL_ID = "SMARTHANDLEBAR_BLE_service_channel";
+    private static final UUID MY_SERVICE_UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID MY_CHARACTERISTIC_UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID METADATA_CHARACTERISTIC_UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID MY_DESCRIPTOR_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+
     private Context context;
     private BluetoothAdapter bluetoothAdapter;
 
-    public GATTClientManager(Context context) {
-        this.context = context.getApplicationContext(); // safer, avoid leaking Activity
-    }
 
     /************************************
      **      BluetoothAdapter INIT     **
@@ -72,10 +84,14 @@ public class GATTClientManager extends Service {
             "com.example.bluetooth.le.ACTION_GATT_CONNECTED";
     public final static String ACTION_GATT_DISCONNECTED =
             "com.example.bluetooth.le.ACTION_GATT_DISCONNECTED";
+    public final static String ACTION_GATT_SERVICES_DISCOVERED =
+            "com.example.bluetooth.le.ACTION_GATT_SERVICES_DISCOVERED";
 
     private static final int STATE_DISCONNECTED = 0;
     private static final int STATE_CONNECTED = 2;
 
+    private final ByteArrayOutputStream imageBuffer = new ByteArrayOutputStream();
+    private int expectedImageSize = 0;
     private int connectionState;
 
     // BROADCASTING
@@ -84,52 +100,128 @@ public class GATTClientManager extends Service {
         sendBroadcast(intent);
     }
 
+    /*
+     Connect to device → onConnectionStateChange()
+                           ↓
+              Discover services → onServicesDiscovered()
+                           ↓
+     Find your characteristic and enable notifications
+                           ↓
+     Device sends data     → onCharacteristicChanged()
+     You request data      → onCharacteristicRead()
+    */
+
+    // Reacts to BLE events (connect, discover, read, notify)
     private final BluetoothGattCallback bluetoothGattCallback = new BluetoothGattCallback() {
+        // Called when connection state changes (connected/disconnected)
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 // successfully connected to the GATT Server
                 connectionState = STATE_CONNECTED;
                 broadcastUpdate(ACTION_GATT_CONNECTED);
+                if (ActivityCompat.checkSelfPermission(GATTClientManager.this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    Log.e("Service Permission", "cannot discover services due to permission restrictions.");
+                    return;
+                }
+                gatt.discoverServices(); // Calls onServiceDiscovered
+                bluetoothGatt.discoverServices(); // Discover services after successful connection
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 // disconnected from the GATT Server
                 connectionState = STATE_DISCONNECTED;
                 broadcastUpdate(ACTION_GATT_DISCONNECTED);
+                close();
+            }
+        }
+
+        // Exploring what services and characteristics a BLE device offers.
+        @Override
+        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            super.onServicesDiscovered(gatt, status);
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Services discovered");
+                broadcastUpdate(ACTION_GATT_SERVICES_DISCOVERED);
+
+                // Step 1: Access the custom service
+                BluetoothGattService service = gatt.getService(MY_SERVICE_UUID);
+                if (service != null) {
+                    Log.i(TAG, "Service found!");
+
+
+                    // Step 2: Enable notifications for the actual image data
+                    BluetoothGattCharacteristic characteristic = service.getCharacteristic(MY_CHARACTERISTIC_UUID);
+                    if (characteristic != null) {
+                        Log.i(TAG, "Characteristic found!");
+
+                        if (ActivityCompat.checkSelfPermission(GATTClientManager.this,
+                                Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                            Log.e(TAG, "BLUETOOTH_CONNECT permission not granted");
+                            stopSelf();
+                            return;
+                        }
+
+                        // Enable notifications via descriptor
+                        // this call enables or disables local notification tracking for a given characteristic.
+                        gatt.setCharacteristicNotification(characteristic, true); // Calls onCharacteristicChanged
+                        BluetoothGattDescriptor desc = characteristic.getDescriptor(MY_DESCRIPTOR_UUID);
+
+                        if (desc != null) {
+                            Log.i(TAG, "Descriptor found!");
+                            desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                            gatt.writeDescriptor(desc);
+                            Log.i(TAG, "Wrote descriptor to enable notifications.");
+                        }
+                    }
+                } else {
+                    Log.i(TAG, "Service NOT found!");
+                }
+            } else {
+                Log.w(TAG, "onServicesDiscovered received: " + status);
+            }
+        }
+
+        // When the remote device sends notifications or indications, handles received data
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            Log.i(TAG, "CHECK CharChanged");
+            if (MY_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                byte[] value = characteristic.getValue();
+                String receivedText = new String(value, StandardCharsets.UTF_8);
+                Log.i(TAG, "Received BLE text: " + receivedText);
+
+                Intent intent = new Intent("TEXT_DATA_READY");
+                intent.putExtra("incoming_text_data", receivedText);
+                sendBroadcast(intent);  // same as sending action to intent!!
+            }
+        }
+
+        // Used to read characteristics manually (e.g., metadata like image size).
+        @Override
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                if (METADATA_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                    byte[] metadata = characteristic.getValue();
+                    expectedImageSize = parseImageSize(metadata);
+                    Log.i(TAG, "ImageSize: " + expectedImageSize);
+                }
             }
         }
 
         @Override
-        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-            super.onServicesDiscovered(gatt, status);
-            // Handle service discovery here (e.g., reading characteristics or enabling notifications)
+        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Characteristic written successfully");
+            }
         }
-
-//        @Override
-//        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-//            if (status == BluetoothGatt.GATT_SUCCESS) {
-//                Log.i(SCAN_TAG, "Services discovered");
-//
-//                // You can interact with the services and characteristics here
-//                BluetoothGattService service = gatt.getService(MY_SERVICE_UUID);
-//                BluetoothGattCharacteristic characteristic = service.getCharacteristic(MY_CHARACTERISTIC_UUID);
-//                // Read/write characteristic or subscribe to notifications
-//            }
-//        }
-//
-//        @Override
-//        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-//            if (status == BluetoothGatt.GATT_SUCCESS) {
-//                Log.i(SCAN_TAG, "Characteristic read: " + characteristic.getStringValue(0));
-//            }
-//        }
-//
-//        @Override
-//        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-//            if (status == BluetoothGatt.GATT_SUCCESS) {
-//                Log.i(SCAN_TAG, "Characteristic written successfully");
-//            }
-//        }
     };
+
+    // save the metadata of the incoming image
+    private int parseImageSize(byte[] metadata) {
+        // Assuming the first 4 bytes represent the image size
+        return ByteBuffer.wrap(metadata, 0, 4).getInt();
+    }
+
 
     public boolean connect(final String address) {
         if (bluetoothAdapter == null || address == null) {
@@ -218,6 +310,12 @@ public class GATTClientManager extends Service {
         Log.i(TAG, "GATT Service successfully closed.");
     }
 
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        close(); // Clean up BLE connection
+    }
+
 
     /************************************
      **        MAIN APP FOR GATT       **
@@ -226,6 +324,7 @@ public class GATTClientManager extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        context = getApplicationContext();
         Log.d(TAG, "Service created, initializing Bluetooth adapter...");
 
         boolean initResult = initialize();

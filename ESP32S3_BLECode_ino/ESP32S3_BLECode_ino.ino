@@ -1,22 +1,20 @@
 #include <ArduinoBLE.h>
+#include <SPI.h>
 
+#define CHARACTERISTIC_SIZE 512
 
-// UUIDs for Smart Glasses BLE Application
-const char* serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-const char* txCharacteristicUUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // MCU to Android
-const char* rxCharacteristicUUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Android to MCU
-const char* descriptorUUID = "2901";  // Standard descriptor UUID
+const char* serviceUUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";      // Custom service UUID
+const char* rxCharUUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";  // Metadata characteristic UUID (read/notify)
+const char* txCharUUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";        // Image/data characteristic UUID (write/notify)
 
-#define CHARACTERISTIC_SIZE 4  // Adjust as needed for your sensor data packet size
+BLEService myService(serviceUUID);
+BLECharacteristic rxCharacteristic(rxCharUUID, BLERead | BLENotify, CHARACTERISTIC_SIZE);
+BLECharacteristic txCharacteristic(txCharUUID, BLERead | BLEWrite | BLENotify, CHARACTERISTIC_SIZE);
 
-BLEService customService(serviceUUID);
-BLECharacteristic txCharacteristic(characteristicUUID,
-                                   BLERead | BLENotify,
-                                   CHARACTERISTIC_SIZE);
-BLEDescriptor myDescriptor(descriptorUUID, "Sensor Data");
+BLEDescriptor myDescriptor("00002902-0000-1000-8000-00805f9b34fb", "0");
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   while (!Serial);
 
   if (!BLE.begin()) {
@@ -25,16 +23,22 @@ void setup() {
   }
 
   BLE.setLocalName("SmartGlassesMCU");
-  BLE.setAdvertisedService(customService);
+  BLE.setAdvertisedService(myService);
 
-  customService.addCharacteristic(txCharacteristic);
+  myService.addCharacteristic(txCharacteristic);
+  myService.addCharacteristic(rxCharacteristic);
+
   txCharacteristic.addDescriptor(myDescriptor);
 
-  BLE.addService(customService);
-  BLE.advertise();
+  BLE.addService(myService);
 
-  Serial.println("BLE device is now advertising");
+  rxCharacteristic.setValue("Ready to receive");
+  txCharacteristic.setValue("Ready to send");
+
+  BLE.advertise();
+  Serial.println("BLE advertising started...");
 }
+
 
 void loop() {
   BLEDevice central = BLE.central();
@@ -44,29 +48,26 @@ void loop() {
     Serial.println(central.address());
 
     while (central.connected()) {
-      sendSensorData();
-      delay(1000);  // Send data every second
-    }
-
-    handleDisconnection();
+      const char* text = "Translated Conversation!";
+      sendTextData(text);
+      delay(500);  // Delay to avoid flooding the BLE connection
+    } 
+    Serial.println("Disconnected from central");
   }
 }
 
-void sendSensorData() {
-  uint8_t packet[CHARACTERISTIC_SIZE];
+void sendTextData(const char* speechText) {
+  size_t len = strlen(speechText);
 
-  // Example dummy sensor data (e.g., incrementing counter or random values)
-  static uint32_t counter = 0;
-  packet[0] = (counter >> 24) & 0xFF;
-  packet[1] = (counter >> 16) & 0xFF;
-  packet[2] = (counter >> 8) & 0xFF;
-  packet[3] = counter & 0xFF;
+  if (len > CHARACTERISTIC_SIZE) {
+    len = CHARACTERISTIC_SIZE; // Truncate to fit characteristic size
+  }
 
-  txCharacteristic.writeValue(packet, CHARACTERISTIC_SIZE);
-  Serial.print("Sent packet: ");
-  Serial.println(counter);
-  counter++;
+  txCharacteristic.writeValue((const uint8_t*)speechText, len);
+  Serial.print("Sent text: ");
+  Serial.println(speechText);
 }
+
 
 void handleDisconnection() {
   Serial.println("Central disconnected");
