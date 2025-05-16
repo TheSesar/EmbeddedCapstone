@@ -343,6 +343,8 @@ public class MainActivity extends AppCompatActivity {
 
             // Unregister the receiver to stop receiving GATT updates
             unregisterReceiver(connectionReceiver);
+            LocalBroadcastManager.getInstance(this)
+                    .unregisterReceiver(imageReceiver);
 
             // Stop the BLE service (disconnecting from the device)
             Intent serviceIntent = new Intent(this, GATTClientManager.class);
@@ -382,7 +384,6 @@ public class MainActivity extends AppCompatActivity {
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
-            Log.d("BLE", "CHECK Service connected");
             GATTService = ((GATTClientManager.LocalBinder) service).getService();
             if (GATTService != null) {
                 if (!GATTService.initialize()) {
@@ -401,9 +402,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public void onServiceDisconnected(ComponentName name) {
-            GATTService = null;
-        }
+        public void onServiceDisconnected(ComponentName name) { GATTService = null; }
     };
 
     /************************************
@@ -430,11 +429,13 @@ public class MainActivity extends AppCompatActivity {
     private final BroadcastReceiver imageReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            Log.i("ImageReceiver", "OnReceive Activated");
             if ("IMAGE_DATA_READY".equals(intent.getAction())) {
                 byte[] imageData = intent.getByteArrayExtra("image_bitmap");
                 assert imageData != null;
                 Bitmap bitmap = BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
                 imageView.setImageBitmap(bitmap);
+                Log.i("ImageReceiver", "Bitmap is set!");
             }
         }
     };
@@ -470,6 +471,8 @@ public class MainActivity extends AppCompatActivity {
         // Simple communication from BLE handler to UI
         LocalBroadcastManager.getInstance(this)
                 .registerReceiver(imageReceiver, new IntentFilter("IMAGE_DATA_READY"));
+
+        Log.d(SERVICE_TAG, "WELLLL");
     }
 
 
@@ -477,9 +480,17 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        unregisterReceiver(connectionReceiver);
-        LocalBroadcastManager.getInstance(this)
-                .unregisterReceiver(imageReceiver);
+        try {
+            unregisterReceiver(connectionReceiver);
+        } catch (IllegalArgumentException e) {
+            Log.w("Pause", "connectionReceiver was not registered");
+        }
+
+        try {
+            LocalBroadcastManager.getInstance(this).unregisterReceiver(imageReceiver);
+        } catch (IllegalArgumentException e) {
+            Log.w("Pause", "imageReceiver was not registered");
+        }
     }
 
 

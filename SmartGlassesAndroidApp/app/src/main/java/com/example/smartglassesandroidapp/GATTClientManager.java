@@ -129,6 +129,7 @@ public class GATTClientManager extends Service {
                 // disconnected from the GATT Server
                 connectionState = STATE_DISCONNECTED;
                 broadcastUpdate(ACTION_GATT_DISCONNECTED);
+                close();
             }
         }
 
@@ -156,6 +157,7 @@ public class GATTClientManager extends Service {
                             return;
                         }
 
+                        Log.i(TAG, "Read image metadata");
                         gatt.readCharacteristic(metadataCharacteristic); // calls onCharacteristicRead
                     }
 
@@ -205,13 +207,14 @@ public class GATTClientManager extends Service {
                     // Check if we have received the complete image
                     if (imageBuffer.size() >= expectedImageSize) {
                         byte[] fullImage = imageBuffer.toByteArray();
-                        Bitmap bitmap = BitmapFactory.decodeByteArray(fullImage, 0, fullImage.length);
+                        // Bitmap bitmap = BitmapFactory.decodeByteArray(fullImage, 0, fullImage.length);
 
                         Log.i(TAG, "REACHED IMAGE DATA PART");
+
                         // Send broadcast to Activity
                         Intent intent = new Intent("IMAGE_DATA_READY");
                         intent.putExtra("image_bitmap", fullImage); // Caution: Size limits apply
-                        LocalBroadcastManager.getInstance(context).sendBroadcast(intent);  // same as sending action to intent!!
+                        sendBroadcast(intent);  // same as sending action to intent!!
 
                         imageBuffer.reset();
                     }
@@ -222,11 +225,33 @@ public class GATTClientManager extends Service {
         // Used to read characteristics manually (e.g., metadata like image size).
         @Override
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            Log.i(TAG, "CHECK: READ FROM ESP METADATA");
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (IMAGE_METADATA_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
                     byte[] metadata = characteristic.getValue();
                     expectedImageSize = parseImageSize(metadata);
+                    Log.i(TAG, "ImageSize: " + expectedImageSize);
+                } else if (IMAGE_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                    Log.i(TAG, "CHECK: Matched");
+                    byte[] chunk = characteristic.getValue();
+
+                    synchronized (imageBuffer) {
+                        imageBuffer.write(chunk, 0, chunk.length);
+
+                        // Check if we have received the complete image
+                        if (imageBuffer.size() >= expectedImageSize) {
+                            byte[] fullImage = imageBuffer.toByteArray();
+                            // Bitmap bitmap = BitmapFactory.decodeByteArray(fullImage, 0, fullImage.length);
+
+                            Log.i(TAG, "REACHED IMAGE DATA PART");
+
+                            // Send broadcast to Activity
+                            Intent intent = new Intent("IMAGE_DATA_READY");
+                            intent.putExtra("image_bitmap", fullImage); // Caution: Size limits apply
+                            sendBroadcast(intent);  // same as sending action to intent!!
+
+                            imageBuffer.reset();
+                        }
+                    }
                 }
             }
         }
@@ -235,6 +260,16 @@ public class GATTClientManager extends Service {
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.i(TAG, "Characteristic written successfully");
+            }
+        }
+
+        @Override
+        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            Log.i(TAG, "onDescriptorWrite() - UUID: " + descriptor.getUuid().toString() + ", Status: " + status);
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i(TAG, "Notification descriptor written — subscribed!");
+            } else {
+                Log.e(TAG, "Failed to write notification descriptor: " + status);
             }
         }
     };
@@ -331,6 +366,12 @@ public class GATTClientManager extends Service {
         bluetoothGatt.close();
         bluetoothGatt = null;
         Log.i(TAG, "GATT Service successfully closed.");
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        close(); // Clean up BLE connection
     }
 
 
