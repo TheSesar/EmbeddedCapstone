@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="blue">#1E3A8A</color>
+    <color name="white">#FFFFFFFF</color>
+    <string name="app_name">TranslatorApp2</string>
+    <style name="Base.Theme.TranslatorApp2" parent="Theme.Material3.DayNight.NoActionBar">
+        
+        <item name="colorPrimary">@color/blue</item>
+        <item name="colorPrimaryVariant">@color/blue</item>
+        <item name="android:statusBarColor">@color/blue</item>
+    </style>
+    <style name="Theme.TranslatorApp2" parent="Base.Theme.TranslatorApp2"/>
+</resources>
