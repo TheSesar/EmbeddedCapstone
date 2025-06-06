@@ -34,6 +34,7 @@ The architecture emphasizes **low latency**, **power efficiency**, and **ease of
 ## 📦 Repository Structure
 The project is organized into the following directories and files:
 
+```
 SmartGlasses/
 ├── ESP32S3_BLECode_ino/ # Arduino firmware for the Seeed Studio XIAO ESP32S3
 │ ├── SmartGlasses.ino # Main logic: BLE, speech-to-text, I2S audio output
@@ -52,6 +53,7 @@ SmartGlasses/
 ├── .gitignore # Files/directories to exclude from Git
 ├── .DS_Store # System file (ignored)
 ├── README.md # 📘 Project documentation (this file)
+```
 
 
 ---
