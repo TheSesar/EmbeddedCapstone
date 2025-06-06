@@ -62,7 +62,6 @@ SmartGlasses/
 
 ### 🎛️ Hardware: Seeed Studio XIAO ESP32S3
 - Onboard microphone for live audio input
-- Uses **Audio Processing Unit (APU)** for low-power audio capture
 - Speech-to-text handled on-device via **Deepgram streaming API**
 - BLE communication using **custom GATT service**
 - I2S DAC output for text-to-speech playback
