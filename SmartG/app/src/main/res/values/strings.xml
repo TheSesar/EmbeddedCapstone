@@ -1,0 +1,16 @@
+<resources>
+
+    <string name="app_name">SmartG</string>
+
+
+    <!--    additional strings-->
+    <string name="no_device">no device</string>
+    <string name="stop_scanning">Stop Scanning</string>
+    <string name="start_scanning">Start Scanning</string>
+    <string name="connection_status">connection status</string>
+    <string name="image_desc">Image received from MCU</string>
+    <string name="device_still_linked">device still paired</string>
+    <!--    %1$s is placeholder for a string that gets inserted later -->
+
+
+</resources>
