@@ -1,7 +1,10 @@
 package com.smartg.app;
+//LIBRARIES
+import static androidx.constraintlayout.widget.ConstraintLayoutStates.TAG;
 import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
@@ -22,18 +25,22 @@ import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.bluetooth.BluetoothProfile;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresPermission;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 import java.util.ArrayList;
 import java.util.List;
 
+
+// second activity is an activity class
+// this activity is the android page that starts bluetooth service, scans for available BLE devices, allows pairing and unpairing to a BLE device
 public class SecondActivity extends AppCompatActivity {
 
     /************************************
@@ -49,54 +56,57 @@ public class SecondActivity extends AppCompatActivity {
     private static final int MULTIPLE_PERMISSIONS_REQUEST_CODE = 123;
     private static final int BLE_PERMISSION_REQUEST_CODE = 1;
     private static final long SCAN_PERIOD = 45000;    // Stops scanning after 45 seconds.
+    private static final int MAX_CONNECTION_ATTEMPTS = 2;
+    private int connectionAttempts = 0;
 
     //Booleans
     private boolean connected = false;
     private boolean scanning = false;
     private boolean isServiceBound = false;
-
     private boolean isServiceReady = false;
     private boolean shouldStartScan = false;
     private boolean shouldConnectToDevice = false;
-
+    private boolean isReceiverRegistered = false; // Track receiver registration
 
     //Instantiations
-    private BluetoothAdapter bluetoothAdapter; // Adapter class
-    private BluetoothLeScanner bluetoothLeScanner; // Scanner class
-    private GATTService gattService; // Service class
-    private BluetoothDevice connectedDevice = null;  //  connected bluetooth device
-    private final List<BluetoothDevice> bleDeviceList = new ArrayList<>(); // list of bluetooth devices
-    private ArrayAdapter<String> bleDeviceListAdapter; // adapter for list of bluetooth devices
-    private Button bleScanButton; // UI button
-    private Button unpairButton; // UI button
-    private TextView statusTextView; // UI textview
-    private final Handler handler = new Handler(Looper.getMainLooper()); // Handler class: “Create a Handler that runs code on the UI (main) thread.”
+    private BluetoothAdapter bluetoothAdapter;
+    private BluetoothLeScanner bluetoothLeScanner;
+    private GATTService gattService;
+    private final List<BluetoothDevice> bleDeviceList = new ArrayList<>();
+    private ArrayAdapter<String> bleDeviceListAdapter;
+    private Button bleScanButton;
+    private Button unpairButton;
+    private TextView statusTextView;
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private BluetoothDevice pendingDeviceToConnect;
 
-    /************************************
-     **      LIFECYCLE of ACTIVITY      **
-     ************************************/
+    /********************************************************
+     **            LIFECYCLE methods of ACTIVITY            **
+     ********************************************************/
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_second);
 
+        // setup intent for button that navigates second activity to third activity
         // Initialize buttons using findViewById
         Button translatorActivity = findViewById(R.id.translator_button);
-        // Add click listener for next button
         translatorActivity.setOnClickListener(v -> {
-            // Intent to start ThirdActivity
             Intent intent = new Intent(SecondActivity.this, ThirdActivity.class);
-            // Start the activity
             startActivity(intent);
         });
 
-        // Start and bind service
+        // Start service as foreground service and bind activity to service
         Intent serviceIntent = new Intent(this, GATTService.class);
-        startService(serviceIntent);
+        // Start as foreground service immediately using startForegroundService() not startService().
+        // Check if service is already running before starting it
+        if (!GATTSingleton.getInstance().isServiceRunning()) {
+            startForegroundService(serviceIntent);
+        }
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
 
-        // UI setup
+        // bluetooth scan and pair UI elements
         bleScanButton = findViewById(R.id.bluetooth_switch);
         unpairButton = findViewById(R.id.unpairButton);
         statusTextView = findViewById(R.id.connectedDevice);
@@ -106,59 +116,43 @@ public class SecondActivity extends AppCompatActivity {
 
         // Disable scan button until service is ready
         bleScanButton.setEnabled(false);
-
+        // Scan button click handler
         bleScanButton.setOnClickListener(v -> {
             if (isServiceReady && bluetoothLeScanner != null) {
                 startScanDevice();
             } else {
-                shouldStartScan = true; // Delay it
+                shouldStartScan = true;
                 Toast.makeText(this, "Bluetooth not ready. Will scan when ready.", Toast.LENGTH_SHORT).show();
             }
         });
 
+        // ListView click handler
         listView.setOnItemClickListener((parent, view, position, id) -> {
             BluetoothDevice device = bleDeviceList.get(position);
-            deviceAddress = device.getAddress();
-
-            if (connectedDevice != null) {
-                if (gattService.getConnectedDevice().equals(device)) {
+            Log.i("BLE", "Clicked device: " + (device != null ? device.getName() + " [" + device.getAddress() + "]" : "NULL"));
+            //Use Singleton to determine if a device is already connected
+            BluetoothDevice currentlyConnected = gattService.getConnectedDevice();
+            if (currentlyConnected != null) {
+                Log.i("BLE", "ACT2: onCreate -- listview -- a device is currently paired");
+                // A device is currently connected
+                if (currentlyConnected.getAddress().equals(device.getAddress())) {
+                    Log.i("BLE", "ACT2: onCreate -- listview -- clicked current device and now calling disconnectDevice method ");
+                    // Clicking on the currently connected device - disconnect it
                     disconnectDevice();
-                    bleScanButton.setEnabled(true);
                 } else {
-                    Toast.makeText(this, "Disconnect current device before connecting to another.", Toast.LENGTH_SHORT).show();
-                    Toast.makeText(this, gattService.getConnectedDeviceName(), Toast.LENGTH_SHORT).show();
-
+                    Log.i("BLE", "ACT2: onCreate -- listview -- clicked a device that's not the paired device -- displaying warning message ");
+                    // Clicking on a different device - inform user to disconnect first
+                    Toast.makeText(this, "Disconnect current device first: " + currentlyConnected, Toast.LENGTH_SHORT).show();
+                    //getSafeDeviceName(currentlyConnected)
                 }
             } else {
+                Log.i("BLE", "ACT2: onCreate -- listview -- a device is currently not paired");
+                // No device connected - connect to selected device
                 if (isServiceReady) {
+                    Log.w(SERVICE_TAG, "service is ready. Begin pairing device");
                     connectToDevice(device);
-                    bleScanButton.setEnabled(false);
                 } else {
-                    shouldConnectToDevice = true;
-                    pendingDeviceToConnect = device;
-                    Toast.makeText(this, "Service not ready. Will connect when ready.", Toast.LENGTH_SHORT).show();
-                }
-            }
-        });
-
-
-        unpairButton.setOnClickListener(v, (parent, view, position, id)-> {
-            BluetoothDevice device = bleDeviceList.get(position);
-            deviceAddress = device.getAddress();
-            if (connectedDevice != null) {
-                if (gattService.getConnectedDevice().equals(device)) {
-                    disconnectDevice();
-                    bleScanButton.setEnabled(true);
-                } else {
-                    Toast.makeText(this, "Disconnect current device before connecting to another.", Toast.LENGTH_SHORT).show();
-                    Toast.makeText(this, gattService.getConnectedDeviceName(), Toast.LENGTH_SHORT).show();
-
-                }
-            } else {
-                if (isServiceReady) {
-                    connectToDevice(device);
-                    bleScanButton.setEnabled(false);
-                } else {
+                    Log.w(SERVICE_TAG, "service not ready. Device is pending in its pairing");
                     shouldConnectToDevice = true;
                     pendingDeviceToConnect = device;
                     Toast.makeText(this, "Service not ready. Will connect when ready.", Toast.LENGTH_SHORT).show();
@@ -167,175 +161,433 @@ public class SecondActivity extends AppCompatActivity {
         });
     }
 
-    // Registering in onResume() ensures your receiver is only active while the activity is visible.
     @Override
     protected void onResume() {
         super.onResume();
 
-        registerReceiver(connectionReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
-        if (gattService != null) {
+        // Register receivers only if not already registered
+        if (!isReceiverRegistered) {
+            registerReceiver(connectionReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(textReceiver, new IntentFilter("TEXT_DATA_READY"), Context.RECEIVER_NOT_EXPORTED);
+            isReceiverRegistered = true;
+        }
+
+        // Verify service readiness before trying to reconnect
+        if (isServiceBound && isServiceReady && deviceAddress != null) {
             final boolean result = gattService.connect(deviceAddress);
             Log.d(SERVICE_TAG, "Connect request result=" + result);
+        } else {
+            Log.w(SERVICE_TAG, "Skipping reconnection; service not ready.");
         }
-        IntentFilter filter = new IntentFilter("TEXT_DATA_READY");
-        //LocalBroadcastManager.getInstance(this).registerReceiver(textReceiver, filter);
-        registerReceiver(textReceiver, new IntentFilter("TEXT_DATA_READY"), Context.RECEIVER_NOT_EXPORTED);
-
     }
 
-
-    // Unregistering in onPause() prevents memory leaks or unwanted callbacks when the activity is not in the foreground.
     @Override
     protected void onPause() {
         super.onPause();
-        try {
-            unregisterReceiver(connectionReceiver);
-        } catch (IllegalArgumentException e) {
-            Log.w("Pause", "connectionReceiver was not registered");
-        }
 
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(textReceiver);
+        // Unregister receivers if they were registered
+        if (isReceiverRegistered) {
+            try {
+                unregisterReceiver(connectionReceiver);
+                unregisterReceiver(textReceiver);
+                isReceiverRegistered = false;
+            } catch (IllegalArgumentException e) {
+                Log.w("Pause", "Receiver was not registered: " + e.getMessage());
+            }
+        }
     }
 
-
-    // unbind from service when activity is destroyed
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (scanning) {
+            stopScanDevice();
+        }
         if (isServiceBound) {
             unbindService(serviceConnection);
             isServiceBound = false;
         }
+        if (GATTSingleton.getInstance().getBluetoothGatt() != null) {
+            GATTSingleton.getInstance().disconnect(); // Properly cleanup GATT & stop service if safe
+        }
+        if (gattService != null) {
+            gattService.disconnect(true); // Ensure full BLE cleanup before app closes
+        }
+        if (!GATTSingleton.getInstance().isServiceRunning()) {
+            stopService(new Intent(this, GATTService.class)); // Stop service only if no longer needed
+        }
     }
 
+    /*********************************************************
+     **           DONE! BLUETOOTH SERVICE CONNECTION         **
+     *********************************************************/
+    //DONE
+    private final ServiceConnection serviceConnection = new ServiceConnection() {
+        //DONE
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            gattService = ((GATTService.LocalBinder) service).getService();
+            if (gattService != null) {
+                if (!gattService.initialize()) {
+                    Log.e(SERVICE_TAG, "Unable to initialize Bluetooth");
+                    if (!gattService.isBluetoothInitialized()) {
+                        Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                        enableBluetoothLauncher.launch(enableBtIntent); //ask the user to enable Bluetooth instead of immediately closing the app.
+                        return;
+                    }
+                    Log.e(SERVICE_TAG, "Bluetooth cannot be initialized. Exiting.");
+                    finish();
+                    return;
+                }
+                isServiceBound = true;
+                Log.e(SERVICE_TAG, "gattService has been initialized and service is now bound.");
+                // Update UI based on current connection state
+                updateConnectionUI();
+                if (!checkAndRequestPermissions()) {
+                    Log.e(SERVICE_TAG, "Permissions NOT Granted...");
+                    return;
+                }
 
-    /************************************
-     ** SCANNING BLUETOOTH LE DEVICES  **
-     ************************************/
+                bluetoothAdapter = GATTSingleton.getInstance().getBluetoothAdapter();
+                if (bluetoothAdapter == null) {
+                    Log.e(SERVICE_TAG, "Bluetooth not supported on this device.");
+                    return;
+                }
 
-    //ScanCallback adds found bluetooth devices to List: leDeviceList
+                if (!gattService.isBluetoothInitialized()) {
+                    Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                    enableBluetoothLauncher.launch(enableBtIntent);
+                    return;
+                }
+
+                // Service is ready
+                bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
+                isServiceReady = true;
+                bleScanButton.setEnabled(true);
+
+                // Execute deferred actions
+                if (shouldStartScan) {
+                    Log.e(SERVICE_TAG, "deferred scan is now being executed.");
+                    startScanDevice();
+                    shouldStartScan = false;
+                } else {
+                    Log.e(SERVICE_TAG, "no deferred scan exists.");
+                }
+
+                if (shouldConnectToDevice && pendingDeviceToConnect != null) {
+                    Log.e(SERVICE_TAG, "deferred device pairing is now being executed.");
+                    connectToDevice(pendingDeviceToConnect);
+                    pendingDeviceToConnect = null;
+                    shouldConnectToDevice = false;
+                } else {
+                    Log.e(SERVICE_TAG, "no deferred device pairing exists.");
+                }
+            } else {
+                Log.e(SERVICE_TAG, "the bluetooth gatt service is null.");
+            }
+        }
+        //DONE
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            Log.w(SERVICE_TAG, "GATT Service has been unbound unexpectedly.");
+            gattService = null;
+            isServiceBound = false;
+            isServiceReady = false;
+            //Reset Singleton values.
+            GATTSingleton.getInstance().setBluetoothGatt(null);
+            GATTSingleton.getInstance().setBluetoothAdapter(null);
+            //reset this activity's values.
+            bluetoothAdapter = null;
+            bluetoothLeScanner = null;
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (!isServiceBound) {
+                    Log.w(SERVICE_TAG, "Attempting to rebind BLE service...");
+                    Intent serviceIntent = new Intent(getApplicationContext(), GATTService.class);
+                    bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+                }
+            }, 3000);
+            runOnUiThread(() -> {
+                statusTextView.setText(R.string.no_device);
+                bleScanButton.setEnabled(false);
+            });
+        }
+    };
+
+    /************************************************
+     **     DONE! SCANNING BLUETOOTH LE DEVICES     **
+     ************************************************/
+
     private final ScanCallback leScanCallback = new ScanCallback() {
         @Override
         public void onScanResult(int callbackType, ScanResult result) {
             super.onScanResult(callbackType, result);
             BluetoothDevice device = result.getDevice();
-            if (ActivityCompat.checkSelfPermission(
-                    SecondActivity.this,
+
+            if (ActivityCompat.checkSelfPermission(SecondActivity.this,
                     Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 return;
             }
+
             if (device.getName() != null && !bleDeviceList.contains(device)) {
                 bleDeviceList.add(device);
                 bleDeviceListAdapter.add(device.getName());
                 bleDeviceListAdapter.notifyDataSetChanged();
-                Log.i("BLEScan", "Device Added: " + device.getName() + ", Total Devices: " + bleDeviceList.size());
+                Log.i(SCAN_TAG, "Device Added: " + device.getName() + ", Total Devices: " + bleDeviceList.size());
             }
-
-//            // Auto-connect to SmartGlassesMCU
-//            if ("SmartGlassesMCU".equals(device.getName())) {
-//                deviceAddress = device.getAddress();
-//                Log.i("BLEScan", "Target device found: " + device.getName() + ": "+ deviceAddress);
-//
-//                // Actually connect to the auto-discovered device:
-//                handler.post(() -> {
-//                    if (isServiceReady && connectedDevice == null) {
-//                        connectToDevice(device);
-//                        stopScanDevice(); // Stop scanning once target found
-//                    }
-//                });
-//            }
         }
+
         @Override
         public void onScanFailed(int errorCode) {
             super.onScanFailed(errorCode);
-            Log.i(SCAN_TAG, "Scan Failed!");
+            Log.e(SCAN_TAG, "Scan Failed with error code: " + errorCode);
+            runOnUiThread(() -> {
+                scanning = false;
+                bleScanButton.setText(R.string.start_scanning);
+                Toast.makeText(SecondActivity.this, "Scan failed. Please try again.", Toast.LENGTH_SHORT).show();
+            });
         }
     };
 
-
-    //startScanDevice method
     private void startScanDevice() {
         if (!scanning) {
-            if (ContextCompat.checkSelfPermission(this,
-                    Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED &&
-                    ContextCompat.checkSelfPermission(this,
-                            Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                if (bluetoothAdapter == null) {
-                    Log.e(SCAN_TAG, "Bluetooth is unavailable.");
-                    Toast.makeText(this, "Bluetooth is not available. Please connect bluetoothAdapter and try again.", Toast.LENGTH_LONG).show();
-                    return; // Exit the function if Bluetooth is not available
-                } else if (!bluetoothAdapter.isEnabled()) {
-                    Log.e(SCAN_TAG, "Bluetooth is not enabled.");
-                    Toast.makeText(this, "Bluetooth is not enabled. Please enable Bluetooth and try again.", Toast.LENGTH_LONG).show();
-                    return; // Exit the function if Bluetooth not enabled
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+
+                if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
+                    Toast.makeText(this, "Bluetooth is not available or enabled.", Toast.LENGTH_LONG).show();
+                    return;
                 }
 
                 if (bluetoothLeScanner == null) {
-                    // Attempt to get the BluetoothLeScanner from the BluetoothAdapter
                     bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
                     if (bluetoothLeScanner == null) {
-                        // If still null, show an error message and stop
-                        Log.e(SCAN_TAG, "BluetoothLeScanner is null. Could not initialize scanner.");
-                        Toast.makeText(this, "Failed to initialize Bluetooth scanner. Please check your device settings.", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, "Failed to initialize Bluetooth scanner.", Toast.LENGTH_LONG).show();
                         return;
                     }
                 }
+
+                // Clear previous results
+                bleDeviceList.clear();
+                bleDeviceListAdapter.clear();
+                bleDeviceListAdapter.notifyDataSetChanged();
+
                 scanning = true;
                 bluetoothLeScanner.startScan(leScanCallback);
+                bleScanButton.setText("Stop Scanning");
                 Log.i(SCAN_TAG, "Started BLE Scan");
-                handler.postDelayed(() -> {
-                    stopScanDevice();
-                    scanning = false;
-                    runOnUiThread(() -> bleScanButton.setText(R.string.start_scanning));
-                }, SCAN_PERIOD);
+
+                handler.postDelayed(this::stopScanDevice, SCAN_PERIOD);
+
             } else {
-                ActivityCompat.requestPermissions(this,                             // public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults)
-                        new String[]{Manifest.permission.BLUETOOTH_ADMIN,                  // to handle the case where the user grants the permission.
-                                Manifest.permission.ACCESS_FINE_LOCATION}, 1);
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.ACCESS_FINE_LOCATION},
+                        BLE_PERMISSION_REQUEST_CODE);
             }
+        } else {
+            stopScanDevice();
         }
     }
 
-
-    //stopScanDevice method
     private void stopScanDevice() {
         if (scanning) {
             scanning = false;
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-                Log.w(SCAN_TAG, "Missing permissions on stopScanDevice");
-                return;
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
+                if (bluetoothLeScanner != null) {
+                    bluetoothLeScanner.stopScan(leScanCallback);
+                }
             }
-            bluetoothLeScanner.stopScan(leScanCallback);
+            runOnUiThread(() -> bleScanButton.setText(R.string.start_scanning));
             Log.i(SCAN_TAG, "Stopped BLE Scan");
         }
     }
 
+    /****************************************************
+     **        DONE! DEVICE CONNECTION FUNCTIONS       **
+     ****************************************************/
+    //DONE
+    //Auto-Retry for Connection Failures
+    //Instead of failing immediately, you could allow a second attempt after a short delay
+    private void connectToDevice(BluetoothDevice device) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            handlePermissionsNotGranted();
+            return;
+        } else {
+            Log.w("BLE", "ACT2 connectToDevice: passed permissions");
+        }
+        if (device == null) {
+            Log.w("BLE", "ACT2 connectToDevice: Cannot connect -- device null.");
+            return;
+        }
 
-    /***********************************************************************************************************************
-     **       PERMISSION REQUEST:
-     * app needs to get permissions from phone to access phone's hardware and sensitive resources like location/audio     **
-     **********************************************************************************************************************/
+        deviceAddress = device.getAddress();
 
-    //onRequestPermissionsResult method
+        // Call Service Method Before Checking Singleton
+        boolean serviceConnected = gattService.connect(deviceAddress);
+        if (!serviceConnected) {
+            Log.w("BLE", "ACT2 connectToDevice: Service failed to initiate connection.");
+            return;
+        } else {
+            Log.w("BLE", "ACT2 connectToDevice: Service successful in initiating connection.");
+        }
+
+        // Now Check if BluetoothGatt was Assigned
+        if (GATTSingleton.getInstance().getBluetoothGatt() == null) {
+            Log.w("BLE", "ACT2 connectToDevice: Singleton's BluetoothGatt STILL null after connect call.");
+            return;
+        } else {
+            Log.w("BLE", "ACT2 connectToDevice: Singleton's BluetoothGatt initialized properly after connect call.");
+        }
+
+        boolean connectionRequested = GATTSingleton.getInstance().getBluetoothGatt().connect();
+        if (connectionRequested) {
+            Log.i("BLE", "Connection requested for device: " + getSafeDeviceName(device));
+            String name_connected_device = gattService.getConnectedDeviceName();
+            Toast.makeText(this, "Connecting to " + name_connected_device + "...", Toast.LENGTH_SHORT).show(); //Caylan -- this method reaches until here.
+            updateConnectionUI();
+            bleScanButton.setEnabled(false);
+            connectionAttempts = 0;
+        } else {
+            connectionAttempts++;
+            if (connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
+                Log.w("BLE", "Connection failed. Retrying in 3 seconds...");
+                new Handler(Looper.getMainLooper()).postDelayed(() -> connectToDevice(device), 3000);
+            } else {
+                Log.e("BLE", "Max connection attempts reached. Failing.");
+                Toast.makeText(this, "Failed to connect after multiple attempts.", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    //DONE
+    private void disconnectDevice() {
+        Log.i("BLE", "ACT2: disconnectDevice -- entered this method");
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            handlePermissionsNotGranted();
+            return;
+        } else {
+            Log.i("BLE", "ACT2: disconnectDevice -- passed permissions");
+        }
+
+        if (GATTSingleton.getInstance().getBluetoothGatt() != null) {
+            Log.i("BLE", "ACT2: disconnectDevice -- Disconnection requested valid since singleton's global BluetoothGatt NOT null");
+            gattService.disconnect(true);  //CAYLAN -- don't use the singleton's disconnect() instead use the service's disconnect() for cleaner unpairing.
+            Toast.makeText(this, "Disconnecting...", Toast.LENGTH_SHORT).show();
+            updateConnectionUI();
+        } else {
+            Log.i("BLE", "ACT2: disconnectDevice -- Disconnection requested NOT valid since singleton's global BluetoothGatt IS null");
+            Log.w("BLE", "ACT2: disconnectDevice -- Cannot disconnect: Singleton reference is null.");
+            Toast.makeText(this, "ACT2: Service not available for disconnection", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+
+    /************************************************
+     **           DONE! BROADCAST RECEIVERS        **
+     ************************************************/
+
+    //DONE
+    //helper function for the broadcastReceivers.
+    private void updateConnectionUI() {
+        Log.w("BLE", "ACT2: entered updateConnectionUI");
+
+        BluetoothGatt gatt = GATTSingleton.getInstance().getBluetoothGatt();
+        boolean isConnected = gattService != null && gattService.getConnectionState() == BluetoothProfile.STATE_CONNECTED;
+        String currentDeviceName = gattService.getConnectedDeviceName();
+
+        if (gatt == null || !isConnected) { // ✅ Check both the singleton and service state
+            statusTextView.setText("No device connected"); // ✅ Properly reset UI
+            Log.i(TAG, "ACT2: updateConnectionUI -- UI updated when app reopens: No BLE device connected.");
+        } else if ((currentDeviceName != null) && (GATTSingleton.getInstance().getBluetoothGatt() != null)) {
+            Log.w("BLE", "ACT2: updateConnectionUI -- checking for paired device ---- pairing exists -- display connected device");
+            Log.w("BLE", "ACT2: displaying paired device" + currentDeviceName);
+            statusTextView.setText(currentDeviceName);
+            bleScanButton.setEnabled(false);
+            //unpairButton.setEnabled(true);
+        } else if (GATTSingleton.getInstance().getBluetoothGatt() == null) { // ✅ Properly clear UI state
+            Log.w("BLE", "ACT2: updateConnectionUI -- checking for paired device ---- non existing pairing -- no device displayed for the connected device");
+            statusTextView.setText(R.string.no_device);
+            bleScanButton.setEnabled(isServiceReady);
+            //unpairButton.setEnabled(false);
+        }
+    }
+
+    //DONE
+    /*  This helper method creates an IntentFilter and registers it to listen for:
+        ACTION_GATT_CONNECTED → When the BLE device connects.
+        ACTION_GATT_DISCONNECTED → When the BLE device disconnects.
+    */
+    private IntentFilter makeGattUpdateIntentFilter() {
+        final IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(GATTService.ACTION_GATT_CONNECTED);
+        intentFilter.addAction(GATTService.ACTION_GATT_DISCONNECTED);
+        return intentFilter;
+    }
+
+    //DONE
+    /*  Handles Incoming BLE Text Data
+        Listens for "TEXT_DATA_READY" broadcasts from the service.
+        Extracts the received text data (intent.getStringExtra("incoming_text_data")).
+        Logs the data and can process it further (e.g., display in UI).
+    */
+    private final BroadcastReceiver textReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.i("Data Receiver", "OnReceive Activated");
+            if ("TEXT_DATA_READY".equals(intent.getAction())) {
+                String text = intent.getStringExtra("incoming_text_data");
+                Log.i("TextReceiver", "CHECK TEXT: " + text);
+                // Handle text data as needed
+            }
+        }
+    };
+
+    //DONE
+    /*  connectionReceiver – Monitors BLE Connection Changes
+        Listens for "ACTION_GATT_CONNECTED" and "ACTION_GATT_DISCONNECTED".
+        Updates the UI based on the connection state.
+        Shows a Toast notification when a device connects/disconnects.
+        Clears deviceAddress when disconnected to prevent stale connections.
+    */
+    private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            final String action = intent.getAction();
+            Log.d("ConnectionReceiver", "Received action: " + action);
+            if (GATTService.ACTION_GATT_CONNECTED.equals(action)) {
+                connected = true;
+                runOnUiThread(() -> {
+                    updateConnectionUI();
+                    Toast.makeText(SecondActivity.this, "Device connected successfully", Toast.LENGTH_SHORT).show();
+                });
+            } else if (GATTService.ACTION_GATT_DISCONNECTED.equals(action)) {
+                connected = false;
+                deviceAddress = null; // Clear stored address
+                runOnUiThread(() -> {
+                    updateConnectionUI();
+                    Toast.makeText(SecondActivity.this, "Device disconnected", Toast.LENGTH_SHORT).show();
+                });
+            }
+        }
+    };
+
+    /**********************************************
+     **      DONE! PERMISSION HANDLING       **
+     **********************************************/
+
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == BLE_PERMISSION_REQUEST_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permission granted, start your Bluetooth operations
                 startScanDevice();
             } else {
-                // Permission denied, handle accordingly
                 Toast.makeText(this, "Bluetooth permissions are required for scanning.", Toast.LENGTH_SHORT).show();
             }
         }
     }
 
-    //checkAndRequestPermissions method
     private boolean checkAndRequestPermissions() {
-
-        Toast.makeText(this, "Checking Permissions...", Toast.LENGTH_LONG).show();
-
         String[] permissions = new String[]{
                 Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_FINE_LOCATION,
@@ -347,308 +599,46 @@ public class SecondActivity extends AppCompatActivity {
 
         boolean allPermissionsGranted = true;
         for (String permission : permissions) {
-            if (ContextCompat.checkSelfPermission(this,
-                    permission) != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
                 allPermissionsGranted = false;
-                Log.i("permissions", permission + "not granted.");
                 break;
             }
         }
 
         if (!allPermissionsGranted) {
-            ActivityCompat.requestPermissions(this, permissions,
-                    MULTIPLE_PERMISSIONS_REQUEST_CODE);
-            Log.i("permissions", "Permissions not granted!");
-            Toast.makeText(this, "False Result on Permissions", Toast.LENGTH_LONG).show();
+            ActivityCompat.requestPermissions(this, permissions, MULTIPLE_PERMISSIONS_REQUEST_CODE);
             return false;
-        } else {
-            Log.i("permissions", "Permissions granted!");
-            Toast.makeText(this, "Positive Result on Permissions", Toast.LENGTH_LONG).show();
-            return true;
         }
+        return true;
     }
 
-
-    /************************************+++++++++++++++++++++++++++++++++++++++
-     **        HELPER FUNCTIONS: check if bluetooth has been activated       **
-     **************************************************************************/
-
-//    //isBluetoothEnabled method
-//    public boolean isBluetoothEnabled(Context context) {
-//        BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-//        if (bluetoothManager == null) {
-//            Log.e("BluetoothManager", "Unable to initialize BluetoothManager.");
-//            return false;
-//        }
-//
-//        bluetoothAdapter = bluetoothManager.getAdapter();
-//        if (bluetoothAdapter == null) {
-//            Log.e("Bluetooth", "Device doesn't support Bluetooth");
-//            return false;
-//        }
-//        return bluetoothAdapter.isEnabled();
-//    }
-
-    //handlePermissionsNotGranted method
     private void handlePermissionsNotGranted() {
-        Log.i("Permissions",
-                Manifest.permission.BLUETOOTH_CONNECT + "not granted. Discovered in permission check before function call.");
+        Log.w("Permissions", "BLUETOOTH_CONNECT permission not granted");
+        Toast.makeText(this, "Bluetooth permissions required", Toast.LENGTH_SHORT).show();
     }
 
+    /***********************************************
+     **     additional HELPER FUNCTIONS          **
+     ***********************************************/
 
-    /************************************+++++++++++++++++++++++++++++++++++++++
-     **        DEVICE CONNECTION FUNCTIONS:
-     *  connect or disconnect from bluetooth ble device                       **
-     **************************************************************************/
-
-    //connectToDevice method
-    private void connectToDevice(BluetoothDevice device) {
-        if (ActivityCompat.checkSelfPermission(this,
-                android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            handlePermissionsNotGranted();
-            return;
-        }
-        if (device == null) {
-            Log.w("BLE", "No device provided for connection");
-            return;
-        }
-
-        // Register BroadcastReceiver to listen to connection updates
-        // registerReceiver(connectionReceiver, makeGattUpdateIntentFilter(), Context.RECEIVER_NOT_EXPORTED); //duplicate line!
-        if (gattService != null && isServiceBound) {
-            // Ask the service to connect to this device
-            gattService.connect(device.getAddress());
-            connectedDevice = device;
-            Log.i("BLE", "Requested service to connect to device: " + device.getName());
-            // Update UI
-            //statusTextView.setText(getSafeDeviceName(device));
-            if (connectedDevice.equals(gattService.getConnectedDevice())) {
-                statusTextView.setText(gattService.getConnectedDeviceName());
-            }
-        } else {
-            Log.w("BLE", "Service not bound, cannot connect");
-        }
-    }
-
-
-    //disconnectDevice method
-    private void disconnectDevice() {
-        // Check for BLUETOOTH_CONNECT permission
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            handlePermissionsNotGranted();
-            return;
-        }
-
-        if (gattService!= null && isServiceBound && connectedDevice != null) {
-            // Ask the service to disconnect
-            gattService.disconnect();
-            // Unregister receivers
-            try {
-                unregisterReceiver(connectionReceiver);
-            } catch (IllegalArgumentException e) {
-                Log.w("BLE", "connectionReceiver was not registered");
-            }
-
-            connectedDevice = null;
-            if (gattService.getConnectedDevice() == null) {
-                // Update UI
-                statusTextView.setText(R.string.no_device);
-            } else {
-                // Update UI
-                statusTextView.setText(R.string.device_still_linked);
-                //statusTextView.setText(gattService.getConnectedDeviceName());
-            }
-            Log.i("BLE", "Requested service to disconnect device.");
-        } else {
-            Log.w("BLE", "No connected device or service not bound.");
-        }
-    }
-
-    // In SecondActivity, add method to check service connection state:
-    private boolean isDeviceConnected() {
-        return gattService != null && gattService.isConnected();
-    }
-
-
-    /************************************
-     **  BLUETOOTH SERVICE CONNECTION  **
-     ************************************/
-
-    //ServiceConnection
-    private final ServiceConnection serviceConnection = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName name, IBinder service) {
-            gattService = ((GATTService.LocalBinder) service).getService();
-            if (gattService != null) {
-                if (!gattService.initialize()) {
-                    Log.e(SERVICE_TAG, "Unable to initialize Bluetooth");
-                    finish();
-                    return;
-                }
-                isServiceBound = true;
-
-                // Check if device is already connected
-                if (gattService.isConnected()) {
-                    // Device is connected, ready for reads/writes
-                    String deviceName = gattService.getConnectedDeviceName();
-                    // Update UI accordingly
-                    // Update the TextView on the UI thread
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (deviceName != null && !deviceName.isEmpty()) {
-                                statusTextView.setText(deviceName);
-                            } else {
-                                statusTextView.setText("Unknown Device");
-                            }
-                        }
-                    });
-                }
-
-                if (!checkAndRequestPermissions()) {
-                    //Toast.makeText(this, "Permissions NOT Granted...", Toast.LENGTH_LONG).show();
-                    Log.e(SERVICE_TAG, "Permissions NOT Granted...");
-                    return;
-                }
-
-                bluetoothAdapter = gattService.getBluetoothAdapter();
-                if (bluetoothAdapter == null) {
-                    //Toast.makeText(this, "Bluetooth not supported on this device.", Toast.LENGTH_LONG).show();
-                    Log.e(SERVICE_TAG, "Bluetooth not supported on this device.");
-                    return;
-                }
-
-                // Enable Bluetooth if not initialized
-                if (!gattService.isBluetoothInitialized()) {
-                    Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-                    enableBluetoothLauncher.launch(enableBtIntent);
-                    return; // Wait for user to enable
-                }
-
-                // Everything is ready
-                bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
-                isServiceReady = true;
-                bleScanButton.setEnabled(true); // Re-enable now that it's ready
-
-                // ✅ Execute any deferred actions
-                if (shouldStartScan) {
-                    startScanDevice();
-                    shouldStartScan = false;
-                }
-
-                if (shouldConnectToDevice && pendingDeviceToConnect != null) {
-                    connectToDevice(pendingDeviceToConnect);
-                    pendingDeviceToConnect = null;
-                    shouldConnectToDevice = false;
-                    bleScanButton.setEnabled(false);
-                }
-            }
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-            gattService = null;
-            isServiceBound = false;
-        }
-    };
-
-    /*************************************************************
-     **     GATT SERVICE LISTENING:
-     *         [BLE Device Sends Data]
-     *                     ↓
-     *         [BluetoothGattCallback onCharacteristicChanged()]
-     *                     ↓
-     *         Send Local Broadcast ("IMAGE_DATA_READY")
-     *                     ↓
-     *         [BroadcastReceiver onReceive()]
-     *                     ↓
-     *         Update UI (imageView.setImageBitmap, etc.)       **
-     *************************************************************/
-
-    //Broadcast receiver For image/data handling: Gets data from BLE layer (e.g. images) and updates UI
-    private final BroadcastReceiver textReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            Log.i("Data Receiver", "OnReceive Activated");
-            if ("TEXT_DATA_READY".equals(intent.getAction())) {
-                String text = intent.getStringExtra("incoming_text_data");
-                Log.i("TextReceiver", "CHECK TEXT: " + text);
-                // ADD UI
-            }
-        }
-    };
-
-    // Broadcast receiver for connection state
-//    private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
-//        @Override
-//        public void onReceive(Context context, Intent intent) {
-//            final String action = intent.getAction();
-//            if (GATTService.ACTION_GATT_CONNECTED.equals(action)) {
-//                connected = true;
-//            } else if (GATTService.ACTION_GATT_DISCONNECTED.equals(action)) {
-//                connected = false;
-//            }
-//        }
-//    };
-
-    // Update your connectionReceiver to use service state:
-    private final BroadcastReceiver connectionReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            final String action = intent.getAction();
-            if (GATTService.ACTION_GATT_CONNECTED.equals(action)) {
-                connected = true;
-                runOnUiThread(() -> updateConnectionUI());
-            } else if (GATTService.ACTION_GATT_DISCONNECTED.equals(action)) {
-                connected = false;
-                runOnUiThread(() -> updateConnectionUI());
-            }
-        }
-    };
-
-    private void updateConnectionUI() {
-        if (gattService != null && gattService.isConnected()) {
-            String deviceName = gattService.getConnectedDeviceName();
-            statusTextView.setText(deviceName != null ? deviceName : "Connected Device");
-            bleScanButton.setEnabled(false);
-        } else {
-            statusTextView.setText(R.string.no_device);
-            bleScanButton.setEnabled(true);
-            connectedDevice = null;
-        }
-    }
-
-    //makeGattUpdateIntentFilter method
-    private IntentFilter makeGattUpdateIntentFilter() {
-        final IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(GATTService.ACTION_GATT_CONNECTED);
-        intentFilter.addAction(GATTService.ACTION_GATT_DISCONNECTED);
-        return intentFilter;
-    }
-
-
-
-    //============================================helper functions *** Caylan====================================//
-    // Launcher to handle the result of enabling Bluetooth
     private final ActivityResultLauncher<Intent> enableBluetoothLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
                 if (result.getResultCode() == RESULT_OK) {
-                    // Bluetooth is now enabled; safe to get scanner
                     bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
+                    isServiceReady = true;
+                    bleScanButton.setEnabled(true);
                     Toast.makeText(this, "Bluetooth enabled.", Toast.LENGTH_SHORT).show();
                 } else {
                     Toast.makeText(this, "Bluetooth must be enabled to use this feature.", Toast.LENGTH_LONG).show();
                 }
             });
 
-    // check bluetooth permission before getting bluetooth device name, returns device name
     private String getSafeDeviceName(BluetoothDevice device) {
+        if (device == null) return "Unknown";
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            return device != null ? device.getName() : "Unknown";
+            String name = device.getName();
+            return (name != null && !name.isEmpty()) ? name : "Unknown Device";
         }
-        return "Unknown";
+        return "Unknown Device";
     }
-    //============================================helper functions *** Caylan====================================//
-
-
 }

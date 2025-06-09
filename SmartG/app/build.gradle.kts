@@ -35,6 +35,7 @@ dependencies {
 
     implementation(libs.appcompat)
     implementation(libs.material)
+    implementation(libs.language.id.common)
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
@@ -42,6 +43,7 @@ dependencies {
     //  additional dependencies for translator and UI elements
     implementation(libs.translate)
     implementation(libs.material.v1120)
+    implementation(libs.language.id)
 
 
 

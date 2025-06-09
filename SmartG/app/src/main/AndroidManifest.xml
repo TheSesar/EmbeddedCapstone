@@ -17,11 +17,20 @@
     <!-- declare additional permissions for BLE -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-
+    <!-- declare bluetooth as a foreground service permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
 
+    <!--    text to Audio feature permissions   -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- query for the Text-to-Speech (TTS) service in the manifest helps Android identify and allow access to the system's TTS engines. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
+    </queries>
 
     <!--  define the application -->
     <application
@@ -56,6 +65,8 @@
         <!-- define other activities/pages -->
         <activity android:name=".SecondActivity" />
         <activity android:name=".ThirdActivity" />
+        <activity android:name=".FourthActivity" />
+
 
     </application>
 
