@@ -34,7 +34,7 @@
 
 // --- PRIVATE credentials & user favorites -----  
 
-const char* deepgramApiKey =    "c338ccc1f3e976d308e762a3c2cca0e71dac1cc5";   // ## INSERT your Deepgram credentials !
+const char* deepgramApiKey =    "";   // ## INSERT your Deepgram credentials !
 
 #define STT_LANGUAGE      ""  // forcing single language: e.g. "de" (German), reason: improving recognition quality
                                 // keep EMPTY ("") if you want Deepgram to detect & understand 'your' language automatically, 
